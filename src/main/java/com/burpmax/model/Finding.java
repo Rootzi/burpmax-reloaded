@@ -49,6 +49,10 @@ public class Finding {
     public volatile boolean suppressed        = false;
     public volatile String  severityOverride  = null;   // null = no override
     public volatile String  analystNote       = "";
+    /** Where the finding came from: {@link #SOURCE_BURPMAX} or {@link #SOURCE_NUCLEI}. */
+    public volatile String  source            = SOURCE_BURPMAX;
+    public static final String SOURCE_BURPMAX = "BurpMax";
+    public static final String SOURCE_NUCLEI  = "Nuclei";
     public volatile double  cvssScore         = -1;     // -1 = not set
     public volatile String  cvssVector        = "";     // e.g. AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N
 
@@ -136,6 +140,7 @@ public class Finding {
      * so they must be stored separately to preserve evidence fidelity.
      */
     public String dedupKey() {
+        if (SOURCE_NUCLEI.equals(source)) return "nuclei|" + host + "|" + name;
         if (name.startsWith("[ACTIVE]")) {
             return host + "|" + name + "|" + endpoint;
         }
@@ -246,6 +251,7 @@ public class Finding {
         o.put("severity_override", severityOverride != null ? severityOverride : JSONObject.NULL);
         o.put("suppressed",        suppressed);
         o.put("analyst_note",      analystNote);
+        o.put("source",            source);
         o.put("cvss_score",        cvssScore);
         o.put("cvss_vector",       cvssVector != null ? cvssVector : "");
         o.put("remediation_status", remediationStatus);
@@ -299,6 +305,7 @@ public class Finding {
 
         String override = d.isNull("severity_override") ? null : d.optString("severity_override", null);
         f.severityOverride = (override != null && VALID_SEVERITIES.contains(override)) ? override : null;
+        f.source       = SOURCE_NUCLEI.equals(d.optString("source", "")) ? SOURCE_NUCLEI : SOURCE_BURPMAX;
         f.suppressed   = d.optBoolean("suppressed", false);
         String note    = d.optString("analyst_note", "");
         f.analystNote  = note.length() > 4096 ? note.substring(0, 4096) : note;

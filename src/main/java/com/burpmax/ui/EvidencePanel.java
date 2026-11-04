@@ -108,7 +108,7 @@ final class EvidencePanel extends JPanel {
             chips.add(none);
         }
 
-        reqTitle.setText(probe ? "REQUEST  —  sent by BurpMax (this is what reproduces it)"
+        reqTitle.setText(probe ? "REQUEST  —  sent by " + f.source + " (this is what reproduces it)"
                                : "REQUEST  —  captured traffic");
         respTitle.setText(probe ? "RESPONSE  —  to the request above"
                                 : "RESPONSE  —  captured traffic");

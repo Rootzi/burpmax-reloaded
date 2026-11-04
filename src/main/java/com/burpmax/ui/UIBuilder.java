@@ -87,6 +87,9 @@ public class UIBuilder {
     private final JButton   undoBtn = ghostBtn("\u21B6 Undo");
     private final JButton   redoBtn = ghostBtn("\u21B7 Redo");
     private HostGroupView hostView;
+    /** 0 = all, 1 = BurpMax only, 2 = Nuclei only. Click the Source button to cycle. */
+    private int sourceFilter = 0;
+    private java.util.Set<String> lastUiSkips = null;
     private final JButton   scanPauseBtn = ghostBtn("\u23F8 Pause scan");
     private final JButton   scanLogBtn   = ghostBtn("\uD83D\uDCDC Request log");
     private final JButton   reverifyBtn = ghostBtn("\u21BB Re-verify");
@@ -390,6 +393,16 @@ public class UIBuilder {
             refresh();
         });
         bar.add(fpToggle);
+
+        // Source filter: one click cycles All -> BurpMax -> Nuclei -> All
+        JButton srcToggle = ghostBtn("Source: All");
+        srcToggle.setToolTipText("Click to cycle: all findings, BurpMax's own, or Nuclei's");
+        srcToggle.addActionListener(e -> {
+            sourceFilter = (sourceFilter + 1) % 3;
+            srcToggle.setText("Source: " + (sourceFilter == 0 ? "All" : sourceFilter == 1 ? "BurpMax" : "Nuclei"));
+            refresh();
+        });
+        bar.add(srcToggle);
 
         // ── Free-text search ──────────────────────────────────────
         bar.add(Box.createHorizontalStrut(16));
@@ -741,7 +754,7 @@ public class UIBuilder {
         header.setBorder(BorderFactory.createMatteBorder(0,0,1,0,C_BORDER));
 
         // Column widths
-        int[] widths = {35, 90, 280, 200, 55, 90};
+        int[] widths = {35, 90, 280, 200, 55, 90, 50, 80, 70};
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
@@ -806,6 +819,7 @@ public class UIBuilder {
         visibleFindings = all.stream()
                 .filter(f -> (showSuppressed || !f.suppressed) &&
                              (filterSev == null || filterSev.equals(f.effectiveSeverity())) &&
+                             (sourceFilter == 0 || (sourceFilter == 2) == Finding.SOURCE_NUCLEI.equals(f.source)) &&
                              (ft == null || matchesText(f, ft)))
                 .toList();
 
@@ -816,7 +830,7 @@ public class UIBuilder {
         // so it matches the summary label. Without a filter it shows all non-suppressed.
         var s = store.summary();
         int fp = store.getSuppressed().size();
-        boolean filtered = filterSev != null || (filterText != null && !filterText.isBlank());
+        boolean filtered = filterSev != null || sourceFilter != 0 || (filterText != null && !filterText.isBlank());
         int badgeCount = filtered ? visibleFindings.size() : store.getVisible().size();
         lblTotal.setText(String.valueOf(badgeCount));
         lblCrit.setText(String.valueOf(s.getOrDefault(Finding.SEV_CRITICAL, 0)));
@@ -824,7 +838,8 @@ public class UIBuilder {
         lblMed.setText(String.valueOf(s.getOrDefault(Finding.SEV_MEDIUM, 0)));
         lblLow.setText(String.valueOf(s.getOrDefault(Finding.SEV_LOW, 0)));
 
-        String filtStr   = filterSev  != null ? " [" + filterSev + "]" : "";
+        String filtStr   = (filterSev  != null ? " [" + filterSev + "]" : "")
+                + (sourceFilter == 1 ? " [BurpMax]" : sourceFilter == 2 ? " [Nuclei]" : "");
         String searchStr = (filterText != null && !filterText.isBlank())
                 ? " ‹" + filterText.strip() + "›" : "";
         String fpStr     = fp > 0 ? "  |  " + fp + " FP" : "";
@@ -1421,7 +1436,8 @@ public class UIBuilder {
     private List<Finding> getFilteredFindings() {
         List<Finding> out = new ArrayList<>();
         for (Finding f : store.getVisible()) {
-            if (filterSev == null || filterSev.equals(f.effectiveSeverity())) out.add(f);
+            if ((filterSev == null || filterSev.equals(f.effectiveSeverity()))
+                    && (sourceFilter == 0 || (sourceFilter == 2) == Finding.SOURCE_NUCLEI.equals(f.source))) out.add(f);
         }
         return out;
     }
@@ -1903,6 +1919,8 @@ public class UIBuilder {
         final String[] resultOobUrl = {"https://oast.pro"};
         final boolean[] confirmed   = {false};
         final int[][] resultBudgets = {null};
+        final boolean[] resultRunNative = {true};
+        final com.burpmax.nuclei.NucleiRunner.Config[] resultNuclei = {null};
         final boolean[] resultReplayRo = {true};
         int[][] lastScanBudgets = {activeScanner != null ? new int[]{
                 activeScanner.getRiskGuard().budgetMessaging(), activeScanner.getRiskGuard().budgetAuth(),
@@ -2339,19 +2357,24 @@ public class UIBuilder {
         sep3.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 1));
 
         final Runnable relayout = () -> { body.revalidate(); body.repaint(); };
+        final NucleiPanel nucleiPanel = new NucleiPanel(callbacks, relayout);
         final ScanPolicyPanel policyPanel = new ScanPolicyPanel(
                 callbacks,
-                activeScanner != null ? activeScanner.getSkipProbes() : null,
+                lastUiSkips != null ? lastUiSkips : (activeScanner != null ? activeScanner.getSkipProbes() : null),
                 lastScanBudgets[0],
                 lastScanReplayReadOnly[0],
                 null,
-                relayout);
+                relayout,
+                nucleiPanel);
+        CollapsibleSection nucleiSection = new CollapsibleSection("Nuclei templates  \u2014  goal groups", nucleiPanel, false);
         CollapsibleSection policySection = new CollapsibleSection("Scan policy  \u2014  modules, profiles, limits", policyPanel, true);
 
         body.add(Box.createVerticalStrut(12));
         body.add(sep3);
         body.add(Box.createVerticalStrut(8));
         body.add(policySection);
+        body.add(Box.createVerticalStrut(8));
+        body.add(nucleiSection);
 
         // ── Footer bar ────────────────────────────────────────────────────────
         javax.swing.JPanel footer = new javax.swing.JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 10));
@@ -2396,6 +2419,13 @@ public class UIBuilder {
             resultHealthUrl[0]   = healthField.getText().trim();
             // Capture scan policy (disabled probes)
             resultSkipProbes.set(new java.util.HashSet<>(policyPanel.skips()));
+            resultRunNative[0] = nucleiPanel.runNative();
+            java.util.List<String> nHeaders = new java.util.ArrayList<>();
+            if (authToggle.isSelected() && authModeBox.getSelectedIndex() == 0
+                    && !headerField.getText().isBlank() && !tokenField.getText().isBlank()) {
+                nHeaders.add(headerField.getText().trim() + ": " + tokenField.getText().trim());
+            }
+            resultNuclei[0] = nucleiPanel.config(delaySlider.getValue(), nHeaders);
             resultBudgets[0] = policyPanel.budgets();
             resultReplayRo[0] = policyPanel.replayReadOnly();
             dlg.dispose();
@@ -2546,7 +2576,14 @@ public class UIBuilder {
         }
 
         // Apply scan policy (user-selected probe exclusions)
-        activeScanner.setSkipProbes(resultSkipProbes.get());
+        lastUiSkips = new java.util.HashSet<>(resultSkipProbes.get());
+        if (resultRunNative[0]) {
+            activeScanner.setSkipProbes(resultSkipProbes.get());
+        } else {
+            // Nuclei-only scan: skip every BurpMax module.
+            activeScanner.setSkipProbes(new java.util.HashSet<>(com.burpmax.active.ProbeCatalog.allSkipKeys()));
+        }
+        activeScanner.setNucleiConfig(resultNuclei[0]);
         if (resultBudgets[0] != null) {
             activeScanner.setWriteBudgets(resultBudgets[0][0], resultBudgets[0][1], resultBudgets[0][2]);
         }

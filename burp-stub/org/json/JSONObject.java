@@ -19,6 +19,7 @@ public class JSONObject {
     public JSONObject put(String k, long v)    { map.put(k, v); return this; }
     public JSONObject put(String k, double v)  { map.put(k, v); return this; }
 
+    public Object opt(String k)      { return map.get(k); }
     public boolean has(String k)     { return map.containsKey(k); }
     public boolean isNull(String k)  { Object v=map.get(k); return v==null||v==NULL; }
 
@@ -118,6 +119,15 @@ public class JSONObject {
                         case 'n': sb.append('\n'); break;
                         case 'r': sb.append('\r'); break;
                         case 't': sb.append('\t'); break;
+                        case 'b': sb.append('\b'); break;
+                        case 'f': sb.append('\f'); break;
+                        case 'u':
+                            // Unicode escapes: Go's encoding/json writes <, > and & this way
+                            if (pos[0] + 4 <= s.length) {
+                                try { sb.append((char) Integer.parseInt(new String(s, pos[0], 4), 16)); pos[0] += 4; }
+                                catch (NumberFormatException ex) { sb.append('u'); }
+                            } else sb.append('u');
+                            break;
                         default:  sb.append(e);
                     }
                 }

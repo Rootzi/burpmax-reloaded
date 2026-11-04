@@ -54,6 +54,12 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
+### Nuclei integration (optional)
+Needs the `nuclei` binary and its templates (`sudo apt install nuclei`, then `nuclei -update-templates`). Open **Active Scan > Nuclei templates**, pick goals (technology detection, exposed files, misconfigurations, admin panels, known CVEs, reflected GET issues, takeover). Goals are saved with scan profiles.
+- Only read-only plain-HTTP templates run. Templates that send POST/PUT/PATCH/DELETE, brute-force, use destructive payloads, are tagged intrusive/dos/fuzzing/default-login, or need an out-of-band server (unless you allow it) are rejected before anything is sent.
+- Results are imported as normal findings (evidence, Repeater, re-verify, host view, exports) and tagged **Nuclei**. The **Source** button above the table cycles All / BurpMax / Nuclei.
+- Pause stops Nuclei in place and Resume continues it; Cancel stops it. Nuclei's own traffic is not in the BurpMax request log.
+
 ## What is BurpMax?
 
 BurpMax is a feature-rich Burp Suite extension that delivers automated active and passive vulnerability scanning, OOB detection, WAF evasion, authenticated scanning with session health monitoring, CVSS 4.0 scoring, scan checkpointing, smart crawling with stack fingerprinting, and professional PDF/DOCX/CSV report generation. These are capabilities that are either locked behind Burp Professional or require multiple separate tools.

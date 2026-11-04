@@ -98,6 +98,8 @@ public class ActiveScanner {
     private final RiskGuard riskGuard = new RiskGuard();
     // Pause / throttle control and compact request log for the current scan.
     private final ScanFlow flow = new ScanFlow(cancelled);
+    private volatile com.burpmax.nuclei.NucleiRunner.Config nucleiCfg = null;
+    public void setNucleiConfig(com.burpmax.nuclei.NucleiRunner.Config c) { this.nucleiCfg = c; }
     private final AuditLog audit = new AuditLog();
 
     // When true (default), modules that REPLAY the captured request (Auth Bypass, IDOR, CSRF)
@@ -542,6 +544,26 @@ public class ActiveScanner {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 targetPool.shutdownNow();
+            }
+
+            // ---- Nuclei phase (optional) ----------------------------------------
+            com.burpmax.nuclei.NucleiRunner.Config nc = nucleiCfg;
+            if (nc != null && nc.enabled && !cancelled.get()) {
+                java.util.LinkedHashSet<String> origins = new java.util.LinkedHashSet<>();
+                for (ProbeContext pc : targets) {
+                    if (pc.service == null) continue;
+                    boolean https = "https".equalsIgnoreCase(pc.service.getProtocol());
+                    int port = pc.service.getPort();
+                    boolean dflt = (https && port == 443) || (!https && port == 80);
+                    origins.add((https ? "https://" : "http://") + pc.service.getHost() + (dflt ? "" : ":" + port));
+                }
+                status("Starting Nuclei on " + origins.size() + " host(s) ...");
+                com.burpmax.nuclei.NucleiRunner.Outcome no = com.burpmax.nuclei.NucleiRunner.run(
+                        nc, new ArrayList<>(origins),
+                        nf -> { if (store.add(nf)) log("FOUND (nuclei): " + nf.name + " | " + nf.url); },
+                        this::status, this::log, cancelled, flow);
+                status(no.message());
+                log(no.message());
             }
 
             // ---- OOB poll phase -------------------------------------------------

@@ -11,7 +11,7 @@ public class FindingTableModel extends AbstractTableModel {
     @java.io.Serial
     private static final long serialVersionUID = 1L;
 
-    private static final String[] COLS = {"#", "Severity", "Finding", "Endpoint", "HTTP", "CWE", "CVSS", "Status"};
+    private static final String[] COLS = {"#", "Severity", "Finding", "Endpoint", "HTTP", "CWE", "CVSS", "Status", "Source"};
     private transient final List<Finding> rows = new ArrayList<>();
 
     public void setFindings(List<Finding> findings) {
@@ -50,6 +50,7 @@ public class FindingTableModel extends AbstractTableModel {
             case 5 -> f.cwe;
             case 6 -> String.format("%.1f", f.effectiveCvssScore());
             case 7 -> f.remediationStatus;
+            case 8 -> f.source;
             default -> "";
         };
     }

@@ -34,7 +34,7 @@ final class ScanPolicyPanel extends JPanel {
 
     /** One saved profile. */
     private record Profile(String name, Set<String> skips, int messaging, int auth, int other,
-                           boolean replayReadOnly) { }
+                           boolean replayReadOnly, String nuclei) { }
 
     private final transient IBurpExtenderCallbacks callbacks;
     private final transient IntSupplier endpointCount;
@@ -52,9 +52,11 @@ final class ScanPolicyPanel extends JPanel {
     private final JCheckBox replayRo = new JCheckBox("Replay-style checks (IDOR, Auth Bypass, CSRF) only on GET/HEAD/OPTIONS");
     private final Map<String, Profile> custom = new LinkedHashMap<>();
     private boolean adjusting;
+    private final NucleiPanel nuclei;
 
     ScanPolicyPanel(IBurpExtenderCallbacks callbacks, Set<String> initialSkips, int[] budgets,
-                    boolean replayReadOnly, IntSupplier endpointCount, Runnable relayout) {
+                    boolean replayReadOnly, IntSupplier endpointCount, Runnable relayout, NucleiPanel nuclei) {
+        this.nuclei = nuclei;
         this.callbacks = callbacks;
         this.endpointCount = endpointCount;
         this.relayout = relayout;
@@ -182,7 +184,8 @@ final class ScanPolicyPanel extends JPanel {
         }
         Set<String> s = ProbeCatalog.builtInSkips(name);
         if (s == null) return;
-        apply(new Profile(name, s, 3, 15, 60, !"Full (lab / CTF)".equals(name)));
+        apply(new Profile(name, s, 3, 15, 60, !"Full (lab / CTF)".equals(name), null));
+        if (nuclei != null) nuclei.applyBuiltIn(name);
         profileNote.setText("Built-in profile (read-only). Change anything, then type a new name and Save config to keep it.");
     }
 
@@ -192,6 +195,7 @@ final class ScanPolicyPanel extends JPanel {
         budAuth.setValue(p.auth());
         budOther.setValue(p.other());
         replayRo.setSelected(p.replayReadOnly());
+        if (nuclei != null && p.nuclei() != null) nuclei.applyEncoded(p.nuclei());
         refresh();
     }
 
@@ -204,7 +208,7 @@ final class ScanPolicyPanel extends JPanel {
             return;
         }
         int[] b = budgets();
-        custom.put(name, new Profile(name, skips(), b[0], b[1], b[2], replayReadOnly()));
+        custom.put(name, new Profile(name, skips(), b[0], b[1], b[2], replayReadOnly(), nuclei == null ? null : nuclei.encode()));
         persistCustom();
         reloadProfileItems(name);
         profileNote.setText("Saved \"" + name + "\".");
@@ -256,7 +260,7 @@ final class ScanPolicyPanel extends JPanel {
                 for (String k : f[4].split(",")) if (!k.isBlank()) skips.add(k);
                 String[] b = f[1].split(",");
                 custom.put(f[0], new Profile(f[0], skips, Integer.parseInt(b[0]), Integer.parseInt(b[1]),
-                        Integer.parseInt(b[2]), "1".equals(f[3])));
+                        Integer.parseInt(b[2]), "1".equals(f[3]), f.length > 5 && !f[5].isEmpty() ? f[5] : null));
             }
         } catch (Exception ignored) { /* corrupt setting: start with built-ins only */ }
     }
@@ -267,7 +271,8 @@ final class ScanPolicyPanel extends JPanel {
         for (Profile p : custom.values()) {
             sb.append(p.name()).append('\t').append(p.messaging()).append(',').append(p.auth()).append(',').append(p.other())
               .append('\t').append("").append('\t').append(p.replayReadOnly() ? "1" : "0")
-              .append('\t').append(String.join(",", p.skips())).append('\n');
+              .append('\t').append(String.join(",", p.skips()))
+              .append('\t').append(p.nuclei() == null ? "" : p.nuclei()).append('\n');
         }
         try { callbacks.saveExtensionSetting(SETTING, sb.toString()); } catch (Exception ignored) { }
     }

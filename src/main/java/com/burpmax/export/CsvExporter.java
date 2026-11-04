@@ -29,7 +29,7 @@ public class CsvExporter {
             w.print("\uFEFF");
             // New columns are APPENDED so existing import mappings keep working.
             w.println("No,Severity,Name,Host,Endpoint,HTTP Status,CWE,Evidence,Description,Remediation,Timestamp,"
-                    + "Detection Logic,Matched Text,Request Snippet,Response Snippet,Reproduce (curl)");
+                    + "Detection Logic,Matched Text,Request Snippet,Response Snippet,Reproduce (curl),Source");
             int i = 1;
             for (Finding f : sorted) {
                 String ep = f.affectedEndpoints.isEmpty() ? f.url
@@ -62,7 +62,8 @@ public class CsvExporter {
                                 com.burpmax.evidence.Snippet.request(rq, ev.requestMatches()), ">>", "<<")),
                         csvMulti(rs == null ? "" : com.burpmax.evidence.Snippet.toPlain(
                                 com.burpmax.evidence.Snippet.response(rs, ev.responseMatches()), ">>", "<<")),
-                        csv(curlFor(f, rq)));
+                        csv(curlFor(f, rq)),
+                        csv(f.source));
             }
         }
     }

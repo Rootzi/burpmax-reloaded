@@ -74,6 +74,7 @@ public final class StructuredExporter {
                 w.println("- **URL:** `" + f.url + "`");
                 if (f.cwe != null && !f.cwe.isBlank()) w.println("- **CWE:** " + md(f.cwe));
                 w.println("- **Status:** " + f.remediationStatus);
+                w.println("- **Source:** " + f.source);
                 if (f.affectedEndpoints.size() > 1) {
                     w.println("- **Affected endpoints (" + f.affectedEndpoints.size() + "):**");
                     for (Finding.EndpointEntry e : f.affectedEndpoints) w.println("  - `" + e.endpoint + "`");
@@ -134,6 +135,7 @@ public final class StructuredExporter {
             kv(sb, "severity", f.effectiveSeverity(), false);
             kv(sb, "original_severity", f.severity, false);
             kv(sb, "status", f.remediationStatus, false);
+            kv(sb, "source", f.source, false);
             sb.append(",\"false_positive\":").append(f.suppressed);
             kv(sb, "host", f.host, false);
             kv(sb, "url", f.url, false);
