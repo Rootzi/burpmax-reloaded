@@ -155,6 +155,13 @@ class RaceConditionProbe {
         }
 
         // Launch 20 parallel requests as close together as possible
+        // The burst bypasses HttpSender.send(), so vet it with the RiskGuard first.
+        // A refused request (e.g. a messaging/contact endpoint with a small write
+        // budget) means the whole burst is abandoned rather than partially fired,
+        // because a partial burst proves nothing.
+        for (int i = 0; i < BURST_SIZE; i++) {
+            if (!sender.preflight(ctx.service, ctx.originalRequest)) return results;
+        }
         List<HttpSender.Response> responses = sendBurst(ctx.service, ctx.originalRequest,
                 callbacks, BURST_SIZE);
         if (responses.isEmpty()) return results;

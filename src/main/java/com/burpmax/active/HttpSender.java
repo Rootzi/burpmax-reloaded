@@ -23,6 +23,8 @@ public class HttpSender {
     private final java.util.concurrent.atomic.AtomicBoolean cancelled;
     // Optional auth manager -- when set, injects/refreshes auth headers before every send.
     private volatile AuthManager             authManager = null;
+    // Optional safety layer -- when set, every request is vetted before it leaves.
+    private volatile RiskGuard               riskGuard   = null;
 
     private static final int MAX_RESP_BODY  = 131_072;   // 128KB
     private static final int MAX_RETRIES    = 2;
@@ -47,6 +49,20 @@ public class HttpSender {
      * and before any probes start.
      */
     public void setAuthManager(AuthManager am) { this.authManager = am; }
+
+    /** Attach the shared RiskGuard (destructive-payload denylist + write budgets). */
+    public void setRiskGuard(RiskGuard g) { this.riskGuard = g; }
+
+    /**
+     * Ask the RiskGuard whether a request may be sent. Probes that bypass send()
+     * (e.g. the parallel race-condition burst) must call this per request.
+     * Always true when no guard is attached.
+     */
+    public boolean preflight(IHttpService service, byte[] request) {
+        RiskGuard g = this.riskGuard;
+        if (g == null || service == null) return true;
+        return g.check(service.getHost(), service.getPort(), request).allowed();
+    }
 
     /**
      * Send an HTTP request, retrying up to MAX_RETRIES times on transient failure.
@@ -88,6 +104,9 @@ public class HttpSender {
                 try { Thread.sleep(Math.max(0, sleep)); }
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); return null; }
             }
+            // Safety vet. A refusal is final: never retried, never counted as a failure.
+            if (!preflight(service, request)) return null;
+
             Response r = doSend(service, request);
             if (r == null) continue;  // connection-level failure - retry
 

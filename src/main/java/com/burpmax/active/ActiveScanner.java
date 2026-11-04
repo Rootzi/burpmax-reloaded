@@ -94,6 +94,14 @@ public class ActiveScanner {
     private volatile AuthManager           authManager    = null;
     private volatile SessionHealthMonitor  healthMonitor  = null;
 
+    // Safety layer shared by every HttpSender this scanner creates.
+    private final RiskGuard riskGuard = new RiskGuard();
+
+    // When true (default), modules that REPLAY the captured request (Auth Bypass, IDOR, CSRF)
+    // only run against read methods, so a captured write is never re-sent with tampered
+    // credentials or IDs.
+    private volatile boolean replayReadOnly = true;
+
     // User-configured probe skip set (from scan policy UI).
     // Merged with automatic probeFilter() per-endpoint exclusions at dispatch time.
     private volatile Set<String> userSkipProbes = Set.of();
@@ -112,6 +120,7 @@ public class ActiveScanner {
         this.callbacks = callbacks;
         this.helpers   = helpers;
         this.store     = store;
+        this.riskGuard.setLogger(this::log);
     }
 
     public void setOnStatus(Consumer<String> cb)             { this.onStatus     = cb; }
@@ -151,6 +160,21 @@ public class ActiveScanner {
 
     public Set<String> getSkipProbes() { return userSkipProbes; }
 
+    /** Write budgets per endpoint per scan: messaging forms, auth endpoints, everything else. */
+    public void setWriteBudgets(int messaging, int auth, int other) {
+        riskGuard.setBudgets(messaging, auth, other);
+    }
+    public RiskGuard getRiskGuard()                      { return riskGuard; }
+    public void setReplayReadOnly(boolean v)             { this.replayReadOnly = v; }
+    public boolean isReplayReadOnly()                    { return replayReadOnly; }
+
+    /** Modules that re-send the captured request with something altered. */
+    private static final Set<String> REPLAY_MODULES = Set.of("Auth Bypass", "IDOR", "CSRF");
+    private static boolean isReadMethod(String m) {
+        return m == null || m.equalsIgnoreCase("GET") || m.equalsIgnoreCase("HEAD")
+                || m.equalsIgnoreCase("OPTIONS");
+    }
+
     /**
      * Scan a single pre-built request (from right-click context menu).
      * Runs on a daemon thread; does not reset PROBE_URLS or checkpoints.
@@ -162,6 +186,7 @@ public class ActiveScanner {
             return;
         }
         cancelled.set(false);
+        riskGuard.reset();
         Thread t = new Thread(() -> {
             try {
                 ProbeContext ctx = buildProbeContext(item);
@@ -252,6 +277,7 @@ public class ActiveScanner {
         isResuming = false;
         cancelled.set(false);
         probesCompleted.set(0);
+        riskGuard.reset();
         ActiveScanner.clearProbeUrls();  // clear any stale probe URLs from previous scan
         Thread t = new Thread(this::run, "burpmax-active-scanner");
         t.setDaemon(true);
@@ -586,7 +612,7 @@ public class ActiveScanner {
         if (!hasParams) {
             skip.add("SQLi");
             skip.add("SSTI");
-            skip.add("XSS");
+            skip.add("XSS-reflected"); skip.add("Stored XSS");
             skip.add("CmdI");
             skip.add("XXE");
             skip.add("NoSQLi");
@@ -626,7 +652,7 @@ public class ActiveScanner {
                 || urlLower.contains("/unsubscribe") || urlLower.contains("/revoke")) {
             skip.add("SQLi");
             skip.add("SSTI");
-            skip.add("XSS");
+            skip.add("XSS-reflected"); skip.add("Stored XSS");
             skip.add("CmdI");
             skip.add("NoSQLi");
             skip.add("LDAP");
@@ -635,7 +661,7 @@ public class ActiveScanner {
         // Static-like paths — skip injection probes
         if (urlLower.contains("/static/") || urlLower.contains("/assets/")
                 || urlLower.contains("/public/") || urlLower.contains("/vendor/")) {
-            skip.add("SQLi"); skip.add("SSTI"); skip.add("XSS");
+            skip.add("SQLi"); skip.add("SSTI"); skip.add("XSS-reflected"); skip.add("Stored XSS");
             skip.add("CmdI"); skip.add("XXE"); skip.add("LDAP");
         }
 
@@ -853,6 +879,13 @@ public class ActiveScanner {
         tasks.addAll(tier3);
         tasks.addAll(tier4);
 
+        // Enforce the scan policy for EVERY task (previously ~9 probes ignored it), and
+        // keep replay-class modules off write methods when that safety option is on.
+        final boolean readOnlyReplay = replayReadOnly;
+        final String ctxMethod = ctx.method;
+        tasks.removeIf(t -> ProbeCatalog.isSkipped(t.getKey(), skipProbes)
+                || (readOnlyReplay && REPLAY_MODULES.contains(t.getKey()) && !isReadMethod(ctxMethod)));
+
         // ── Sequential execution with per-probe timeout ───────────────────────
         // Probes run ONE AT A TIME on the calling target thread in tier order.
         // This ensures:
@@ -910,6 +943,7 @@ public class ActiveScanner {
     private HttpSender newSender() {
         HttpSender s = new HttpSender(callbacks, helpers, requestDelayMs, cancelled);
         if (authManager != null) s.setAuthManager(authManager);
+        s.setRiskGuard(riskGuard);
         return s;
     }
 

@@ -295,7 +295,8 @@ public class GraphQlProbe {
             String argValue = arg[1];
 
             // SQLi probe via variable injection
-            for (String payload : List.of("'", "' OR '1'='1", "1; DROP TABLE users--")) {
+            // Error-provoking only; never destructive or WHERE-widening.
+            for (String payload : List.of("'", "\"", "')")) {
                 // Use replaceFirst (not replace) to substitute only the first
                 // occurrence of this value — String.replace replaces ALL occurrences
                 // which corrupts requests where the same string appears in multiple fields.

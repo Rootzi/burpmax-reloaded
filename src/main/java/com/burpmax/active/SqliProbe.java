@@ -43,7 +43,7 @@ public class SqliProbe {
         "'",
         "''",
         "1'",
-        "' OR '1'='1",
+        "')",                // replaces the old OR-tautology: errors, never widens a WHERE
         "' --",
         "1--",
         "\""
