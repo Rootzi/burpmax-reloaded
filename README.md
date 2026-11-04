@@ -27,6 +27,33 @@
 
 ---
 
+## Patched edition: what changed
+
+This build adds client-safety controls, better evidence, and workflow features. The original MIT licence and copyright notice (Omkar Mirkute) are unchanged.
+
+### Scan policy and safety
+- **Every module respects the Scan policy.** Tick a module to *skip* it (same meaning as before). Old saved policies still work.
+- **Profiles:** *Client-safe (recommended)* (default), *Standard*, *Recon only (read-only)*, *Full (lab / CTF)*. Built-ins can't be overwritten: type a new name in the profile box and press **Save config** to keep your own.
+- **Always-on safety rules (not switchable):** payloads that delete/drop/truncate/write files are never sent; boolean/OR tautologies and NoSQL widening operators are never sent on write requests; `DELETE` and destructive-named endpoints are never replayed; the race-condition burst is vetted request by request.
+- **Write budgets per endpoint per scan** (defaults: contact/comment forms 3, login/auth 15, everything else 60). A contact form can't be flooded. GET/HEAD/OPTIONS are not affected.
+- **Replay-style checks (IDOR, Auth Bypass, CSRF) only on read methods** by default.
+- The scan dialog is resizable and scrollable, remembers its size, and shows a plan summary (modules x endpoints).
+
+### Pacing and control
+- **Pause / Resume in place:** requests simply wait where they are; nothing restarts.
+- **Auto-throttle:** if many requests fail or get HTTP 429/502/503/504, an extra delay is added and fades when the target recovers.
+- **Auto-pause (circuit breaker):** if the target looks to be falling over, the scan pauses itself, retries slowly after a cool-down (60 s, 120 s, 180 s), and after three trips waits for you.
+- **Request log:** a compact CSV of every request sent or blocked (request line, status, duration, outcome). Bodies and headers are not stored.
+- **Checkpoint fixes:** a resumed scan that is interrupted again now remembers earlier progress; writes are throttled.
+- Time-based probes now time only the network call, so delays, pauses and retries can't cause false positives.
+
+### Evidence and reporting
+- The detail pane shows *why it was flagged*, the exact matched text (click to copy), and trimmed request/response snippets that always include the start line, with a hover button for the full message.
+- **Send to Repeater** sends the exact probe request. **Re-verify** replays it once (safety rules apply) and checks the proof again. **Copy as curl** is in the menu.
+- DOCX and CSV contain copyable text snippets, matched text, logic and a curl command. New **Markdown** and **JSON** exports.
+- **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
+- **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
+
 ## What is BurpMax?
 
 BurpMax is a feature-rich Burp Suite extension that delivers automated active and passive vulnerability scanning, OOB detection, WAF evasion, authenticated scanning with session health monitoring, CVSS 4.0 scoring, scan checkpointing, smart crawling with stack fingerprinting, and professional PDF/DOCX/CSV report generation. These are capabilities that are either locked behind Burp Professional or require multiple separate tools.

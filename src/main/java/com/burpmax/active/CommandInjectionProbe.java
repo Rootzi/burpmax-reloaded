@@ -222,7 +222,7 @@ public class CommandInjectionProbe {
 
             long start   = System.currentTimeMillis();
             HttpSender.Response resp = sender.send(ctx.service, req);
-            long elapsed = System.currentTimeMillis() - start;
+            long elapsed = sender.lastNetMs();
 
             if (resp == null) continue;
             long delta = elapsed - baselineMs;
@@ -262,7 +262,7 @@ public class CommandInjectionProbe {
     private static long measureBaseline(ProbeContext ctx, HttpSender sender) {
         long start = System.currentTimeMillis();
         HttpSender.Response r = sender.send(ctx.service, ctx.originalRequest);
-        return r != null ? System.currentTimeMillis() - start : -1;
+        return r != null ? sender.lastNetMs() : -1;
     }
 
     private static String trunc(String s, int n) {

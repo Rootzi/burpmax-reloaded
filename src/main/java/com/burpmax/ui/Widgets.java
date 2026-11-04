@@ -59,4 +59,14 @@ final class Widgets {
         t.setRepeats(false);
         t.start();
     }
+
+    /** A panel that follows the width of the scroll pane it sits in, so content wraps instead of clipping. */
+    static final class TrackingPanel extends JPanel implements Scrollable {
+        @java.io.Serial private static final long serialVersionUID = 1L;
+        @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        @Override public int getScrollableUnitIncrement(Rectangle r, int o, int d) { return 16; }
+        @Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return Math.max(32, r.height - 32); }
+        @Override public boolean getScrollableTracksViewportWidth() { return true; }
+        @Override public boolean getScrollableTracksViewportHeight() { return false; }
+    }
 }

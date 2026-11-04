@@ -55,6 +55,22 @@ public class ScanCheckpoint {
                 java.time.Instant.now().toString(), allTargetUrls.size());
     }
 
+    /**
+     * Checkpoint for a RESUMED scan: keeps everything already completed and the original total,
+     * and makes the endpoints about to be scanned the pending list. (Starting from scratch here
+     * would forget the earlier progress, so a second interruption would rescan finished targets.)
+     */
+    public static ScanCheckpoint continuing(ScanCheckpoint prev, List<String> remainingUrls) {
+        int cap = Math.min(remainingUrls.size(), MAX_URLS);
+        Set<String> pending = new LinkedHashSet<>(remainingUrls.subList(0, cap));
+        return new ScanCheckpoint(prev.completedUrls, pending, prev.startedAt, prev.totalTargets);
+    }
+
+    /** Endpoints still to scan. Counts past the stored-URL cap, so a big scan isn't under-reported. */
+    public int remaining() {
+        return Math.max(pendingUrls.size(), totalTargets - completedUrls.size());
+    }
+
     /** Return a new checkpoint with the given URL moved from pending → completed. */
     public ScanCheckpoint markCompleted(String url) {
         Set<String> newCompleted = new LinkedHashSet<>(completedUrls);
@@ -66,7 +82,7 @@ public class ScanCheckpoint {
 
     /** True if this checkpoint is still relevant (has pending work). */
     public boolean hasPending() {
-        return !pendingUrls.isEmpty();
+        return !pendingUrls.isEmpty() || remaining() > 0;
     }
 
     /** Percentage complete, 0–100. */

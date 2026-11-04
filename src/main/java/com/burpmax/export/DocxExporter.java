@@ -383,7 +383,87 @@ public class DocxExporter {
                 b.append(para("Proof of Concept not available \u2014 finding was detected in a " +
                     "restored session without live request/response data.", false, 18, "888888"));
             }
+            appendEvidenceText(b, f);
         }
+    }
+
+    // ── Copyable evidence (text, not a screenshot) ────────────────────────────
+
+    /**
+     * Detection logic, the exact matched text, and trimmed request/response as real Word text so the
+     * reader can copy it and re-verify. The start line of each message is always present and the
+     * substring that triggered the finding is highlighted.
+     */
+    private static void appendEvidenceText(StringBuilder b, Finding f) {
+        com.burpmax.evidence.Evidence ev = f.primaryEvidence();
+        boolean probe = f.primaryProbeRequest() != null || f.primaryProbeResponse() != null;
+        byte[] rq = probe ? f.primaryProbeRequest()  : f.primaryRawRequest();
+        byte[] rs = probe ? f.primaryProbeResponse() : f.primaryRawResponse();
+
+        b.append(para("", false, 10, "FFFFFF"));
+        b.append(para("Evidence (copyable)", true, 20, "1F3050"));
+
+        if (!ev.logic().isEmpty()) {
+            b.append(para("How it was detected: " + ev.logic(), false, 18, "333333"));
+        }
+        java.util.List<String> matched = new java.util.ArrayList<>(ev.responseMatches());
+        for (String m : ev.requestMatches()) matched.add(m);
+        if (!matched.isEmpty()) {
+            b.append(para("Matched text: " + String.join("   |   ", matched), false, 18, "7A4B00"));
+        }
+        if (rq != null) {
+            b.append(para(probe ? "Request sent by the scanner (trimmed)" : "Captured request (trimmed)",
+                    true, 17, "555555"));
+            b.append(codeBlockXml(com.burpmax.evidence.Snippet.request(rq, ev.requestMatches())));
+        }
+        if (rs != null) {
+            b.append(para("Response (trimmed)", true, 17, "555555"));
+            b.append(codeBlockXml(com.burpmax.evidence.Snippet.response(rs, ev.responseMatches())));
+        } else if (probe) {
+            b.append(para("No response text is needed: this finding is confirmed out of band or by timing.",
+                    false, 17, "888888"));
+        }
+    }
+
+    /** Single-cell shaded table of monospace lines; hit segments get a yellow highlight. */
+    private static String codeBlockXml(java.util.List<com.burpmax.evidence.Snippet.Segment> segs) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<w:tbl>").append(tblPr("9000")).append("<w:tr><w:tc><w:tcPr>")
+          .append("<w:shd w:fill=\"F4F6F8\" w:val=\"clear\"/></w:tcPr>");
+        StringBuilder line = new StringBuilder();
+        boolean any = false;
+        for (com.burpmax.evidence.Snippet.Segment seg : segs) {
+            String[] parts = seg.text().split("\n", -1);
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) { sb.append(codeParagraph(line.toString())); line.setLength(0); any = true; }
+                if (!parts[i].isEmpty()) line.append(codeRun(parts[i], seg.hit()));
+            }
+        }
+        sb.append(codeParagraph(line.toString()));
+        sb.append("</w:tc></w:tr></w:tbl>");
+        return sb.toString();
+    }
+
+    private static String codeParagraph(String runs) {
+        return "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>"
+             + (runs.isEmpty() ? "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>" : runs) + "</w:p>";
+    }
+
+    private static String codeRun(String text, boolean hit) {
+        return "<w:r><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/>"
+             + (hit ? "<w:b/><w:highlight w:val=\"yellow\"/>" : "")
+             + "<w:color w:val=\"" + (hit ? "000000" : "222222") + "\"/><w:sz w:val=\"16\"/></w:rPr>"
+             + "<w:t xml:space=\"preserve\">" + esc(stripCtl(text)) + "</w:t></w:r>";
+    }
+
+    /** XML 1.0 forbids most control characters; binary response bytes would corrupt the document. */
+    private static String stripCtl(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\t' || c >= 32) sb.append(c); else sb.append('.');
+        }
+        return sb.toString();
     }
 
     private static String findingHeader(int num, Finding f) {

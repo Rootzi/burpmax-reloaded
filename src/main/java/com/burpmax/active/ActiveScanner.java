@@ -96,6 +96,9 @@ public class ActiveScanner {
 
     // Safety layer shared by every HttpSender this scanner creates.
     private final RiskGuard riskGuard = new RiskGuard();
+    // Pause / throttle control and compact request log for the current scan.
+    private final ScanFlow flow = new ScanFlow(cancelled);
+    private final AuditLog audit = new AuditLog();
 
     // When true (default), modules that REPLAY the captured request (Auth Bypass, IDOR, CSRF)
     // only run against read methods, so a captured write is never re-sent with tampered
@@ -134,7 +137,21 @@ public class ActiveScanner {
     public void setRequestDelayMs(int ms)                    { this.requestDelayMs = Math.max(0, ms); }
     public int  getRequestDelayMs()                          { return requestDelayMs; }
     public boolean isRunning()                               { return running.get(); }
-    public void    cancel()                                  { cancelled.set(true); }
+    public void    cancel()                                  { cancelled.set(true); flow.release(); }
+
+    /** Pause / resume in place (no restart, no repeated work). */
+    public void    pause()                                   { flow.pauseByUser(); }
+    public void    resume()                                  { flow.resume(); }
+    public boolean isPaused()                                { return flow.isPaused(); }
+    public ScanFlow getFlow()                                { return flow; }
+    public AuditLog getAuditLog()                            { return audit; }
+    public void    setAutoThrottle(boolean on)               { flow.setAutoThrottle(on); }
+
+    private void prepareFlow(boolean freshLog) {
+        flow.reset();
+        flow.setOnStatus(this::status);
+        if (freshLog) audit.clear();
+    }
 
     /**
      * Probe names that can be passed in a skipProbes set.
@@ -187,6 +204,7 @@ public class ActiveScanner {
         }
         cancelled.set(false);
         riskGuard.reset();
+        prepareFlow(true);
         Thread t = new Thread(() -> {
             try {
                 ProbeContext ctx = buildProbeContext(item);
@@ -278,6 +296,9 @@ public class ActiveScanner {
         cancelled.set(false);
         probesCompleted.set(0);
         riskGuard.reset();
+        prepareFlow(true);
+        resumedFrom = null;
+        latestCp.set(null);
         ActiveScanner.clearProbeUrls();  // clear any stale probe URLs from previous scan
         Thread t = new Thread(this::run, "burpmax-active-scanner");
         t.setDaemon(true);
@@ -294,6 +315,7 @@ public class ActiveScanner {
         isResuming = true;
         cancelled.set(false);
         probesCompleted.set(0);
+        prepareFlow(false);
         ActiveScanner.clearProbeUrls();  // clear any stale probe URLs from previous scan
         Thread t = new Thread(this::run, "burpmax-active-scanner");
         t.setDaemon(true);
@@ -368,6 +390,7 @@ public class ActiveScanner {
                 ScanCheckpoint checkpoint = ScanCheckpoint.load(callbacks);
                 if (checkpoint != null && checkpoint.hasPending()) {
                     final Set<String> done = checkpoint.completedUrls;
+                    resumedFrom = checkpoint;
                     List<ProbeContext> remaining = targets.stream()
                             .filter(ctx -> !done.contains(ctx.url))
                             .collect(java.util.stream.Collectors.toList());
@@ -396,8 +419,14 @@ public class ActiveScanner {
             // Create checkpoint for this scan run
             final List<String> allUrls = new ArrayList<>();
             for (ProbeContext ctx : targets) allUrls.add(ctx.url);
-            ScanCheckpoint cp = ScanCheckpoint.start(allUrls);
+            // On resume keep the earlier completed list and the original total, so a second
+            // interruption still knows everything that was already done.
+            ScanCheckpoint cp = resumedFrom != null
+                    ? ScanCheckpoint.continuing(resumedFrom, allUrls)
+                    : ScanCheckpoint.start(allUrls);
             cp.save(callbacks);
+            latestCp.set(cp);
+            lastCpSave.set(System.currentTimeMillis());
 
             probesCompleted.set(alreadyDone);
             final int totalTargets = grandTotal > 0 ? grandTotal : targets.size();
@@ -480,7 +509,7 @@ public class ActiveScanner {
                         // Burp settings. If Burp crashes after this point, resume
                         // will skip this target. Save is ~5ms on SSD; acceptable.
                         ScanCheckpoint updated = cpRef.updateAndGet(c -> c.markCompleted(ctx.url));
-                        updated.save(callbacks);
+                        saveCheckpointThrottled(updated);
                     } finally {
                         hostSem.release();
                         probesCompleted.incrementAndGet();
@@ -574,6 +603,8 @@ public class ActiveScanner {
             // preserve it so the scan can be resumed from where it left off.
             if (!cancelled.get()) {
                 ScanCheckpoint.clear(callbacks);
+            } else {
+                flushCheckpoint();   // make sure the very latest progress is on disk
             }
             // Only fire onComplete for natural completion, not user-initiated cancel.
             if (!cancelled.get() && onComplete != null) onComplete.run();
@@ -941,10 +972,33 @@ public class ActiveScanner {
     }
 
     /** Creates a fresh HttpSender with the current delay setting and shared cancel flag. */
+    // ── Checkpoint writes ─────────────────────────────────────────────────────
+    // Every completed endpoint used to rewrite the whole checkpoint to Burp's settings. With
+    // hundreds of endpoints that is hundreds of full rewrites; now at most one every 1.5 s, with
+    // a final flush when the scan stops, so at most ~1.5 s of progress can be lost in a crash.
+    private volatile ScanCheckpoint resumedFrom = null;
+    private final java.util.concurrent.atomic.AtomicReference<ScanCheckpoint> latestCp =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicLong lastCpSave = new java.util.concurrent.atomic.AtomicLong();
+
+    private void saveCheckpointThrottled(ScanCheckpoint cp) {
+        latestCp.set(cp);
+        long now = System.currentTimeMillis();
+        long last = lastCpSave.get();
+        if (now - last >= 1500 && lastCpSave.compareAndSet(last, now)) cp.save(callbacks);
+    }
+
+    private void flushCheckpoint() {
+        ScanCheckpoint cp = latestCp.get();
+        if (cp != null) cp.save(callbacks);
+    }
+
     private HttpSender newSender() {
         HttpSender s = new HttpSender(callbacks, helpers, requestDelayMs, cancelled);
         if (authManager != null) s.setAuthManager(authManager);
         s.setRiskGuard(riskGuard);
+        s.setFlow(flow);
+        s.setAudit(audit);
         return s;
     }
 

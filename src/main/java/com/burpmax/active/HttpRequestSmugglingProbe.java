@@ -131,7 +131,7 @@ public class HttpRequestSmugglingProbe {
 
         long start   = System.currentTimeMillis();
         HttpSender.Response resp = sender.send(ctx.service, req);
-        long elapsed = System.currentTimeMillis() - start;
+        long elapsed = sender.lastNetMs();
 
         // CL.TE: the back-end waits for Content-Length bytes that never arrive.
         // Manifests as a hang significantly longer than baseline, OR a null response
@@ -161,7 +161,7 @@ public class HttpRequestSmugglingProbe {
 
         long start   = System.currentTimeMillis();
         HttpSender.Response resp = sender.send(ctx.service, req);
-        long elapsed = System.currentTimeMillis() - start;
+        long elapsed = sender.lastNetMs();
 
         // TE.CL: back-end waits for CL bytes it never gets → delta above baseline.
         long deltaTECL = elapsed - baselineMs;
@@ -195,7 +195,7 @@ public class HttpRequestSmugglingProbe {
 
             long start = System.currentTimeMillis();
             HttpSender.Response resp = sender.send(ctx.service, req);
-            long elapsed = System.currentTimeMillis() - start;
+            long elapsed = sender.lastNetMs();
 
             if (resp == null) continue;
 
@@ -298,7 +298,7 @@ public class HttpRequestSmugglingProbe {
 
         long start   = System.currentTimeMillis();
         HttpSender.Response resp = sender.send(ctx.service, req);
-        long elapsed = System.currentTimeMillis() - start;
+        long elapsed = sender.lastNetMs();
 
         long delta = elapsed - baselineMs;
         if (delta >= MIN_DELTA_MS || (resp == null && elapsed >= MIN_DELTA_MS)) {
@@ -357,7 +357,7 @@ public class HttpRequestSmugglingProbe {
 
         long start   = System.currentTimeMillis();
         HttpSender.Response resp = sender.send(ctx.service, req);
-        long elapsed = System.currentTimeMillis() - start;
+        long elapsed = sender.lastNetMs();
 
         long delta = elapsed - baselineMs;
         if (delta >= MIN_DELTA_MS || (resp == null && elapsed >= MIN_DELTA_MS)) {
@@ -484,7 +484,7 @@ public class HttpRequestSmugglingProbe {
     private static long measureBaseline(ProbeContext ctx, HttpSender sender) {
         long start = System.currentTimeMillis();
         HttpSender.Response r = sender.send(ctx.service, ctx.originalRequest);
-        return r != null ? System.currentTimeMillis() - start : -1L;
+        return r != null ? sender.lastNetMs() : -1L;
     }
 
     private static ActiveScanResult buildFinding(String variant, long elapsed, long baselineMs,

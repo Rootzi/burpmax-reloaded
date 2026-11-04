@@ -25,6 +25,11 @@ public class HttpSender {
     private volatile AuthManager             authManager = null;
     // Optional safety layer -- when set, every request is vetted before it leaves.
     private volatile RiskGuard               riskGuard   = null;
+    // Optional pause / throttle control and request log, shared across the whole scan.
+    private volatile ScanFlow                flow        = null;
+    private volatile AuditLog                audit       = null;
+    // Wall-clock duration of the last actual network call (excludes delay, pause and retry waits).
+    private volatile long                    lastNetMs   = 0;
 
     private static final int MAX_RESP_BODY  = 131_072;   // 128KB
     private static final int MAX_RETRIES    = 2;
@@ -52,6 +57,14 @@ public class HttpSender {
 
     /** Attach the shared RiskGuard (destructive-payload denylist + write budgets). */
     public void setRiskGuard(RiskGuard g) { this.riskGuard = g; }
+    public void setFlow(ScanFlow f)       { this.flow = f; }
+    public void setAudit(AuditLog a)      { this.audit = a; }
+
+    /**
+     * How long the last request really took on the wire. Time-based probes must use this instead of
+     * timing around send(), which also includes pacing, pauses and retry back-off.
+     */
+    public long lastNetMs() { return lastNetMs; }
 
     /**
      * Ask the RiskGuard whether a request may be sent. Probes that bypass send()
@@ -61,7 +74,9 @@ public class HttpSender {
     public boolean preflight(IHttpService service, byte[] request) {
         RiskGuard g = this.riskGuard;
         if (g == null || service == null) return true;
-        return g.check(service.getHost(), service.getPort(), request).allowed();
+        RiskGuard.Verdict v = g.check(service.getHost(), service.getPort(), request);
+        if (!v.allowed() && audit != null) audit.refused(service.getHost(), service.getPort(), request, v.reason());
+        return v.allowed();
     }
 
     /**
@@ -87,8 +102,12 @@ public class HttpSender {
      * delay and would not match the sleep threshold).
      */
     public Response send(IHttpService service, byte[] request) {
+        lastNetMs = 0;
         if (cancelled.get()) return null;  // abort immediately if scan cancelled
+        ScanFlow fl = this.flow;
+        if (fl != null && !fl.await()) return null;   // paused: wait here, resume in place
         applyDelay();
+        if (fl != null && !fl.await()) return null;
         if (cancelled.get()) return null;  // abort after delay in case cancel happened during wait
 
         // Apply auth before the first attempt
@@ -108,6 +127,8 @@ public class HttpSender {
             if (!preflight(service, request)) return null;
 
             Response r = doSend(service, request);
+            if (audit != null) audit.sent(service.getHost(), service.getPort(), request, r == null ? -1 : r.statusCode(), lastNetMs);
+            if (fl != null) fl.record(r == null ? -1 : r.statusCode());
             if (r == null) continue;  // connection-level failure - retry
 
             // On 401: trigger re-auth once per send call, then retry with new token.
@@ -126,9 +147,11 @@ public class HttpSender {
 
     /** Apply the inter-request delay (with jitter) before sending. */
     private void applyDelay() {
-        if (delayMs <= 0) return;
+        ScanFlow fl = this.flow;
+        int extra = fl != null ? fl.extraDelayMs() : 0;
+        if (delayMs <= 0 && extra <= 0) return;
         int jitter = (int)(delayMs * 0.3);
-        int actual = delayMs - jitter + java.util.concurrent.ThreadLocalRandom.current().nextInt(jitter * 2 + 1);
+        int actual = (delayMs <= 0 ? 0 : delayMs - jitter + java.util.concurrent.ThreadLocalRandom.current().nextInt(jitter * 2 + 1)) + extra;
         // Sleep in 50ms chunks so cancel is detected within 50ms
         long remaining = actual;
         while (remaining > 0 && !cancelled.get()) {
@@ -141,8 +164,10 @@ public class HttpSender {
 
     /** Single send attempt — returns null on any connection-level error. */
     private Response doSend(IHttpService service, byte[] request) {
+        long t0 = System.nanoTime();
         try {
             IHttpRequestResponse result = callbacks.makeHttpRequest(service, request);
+            lastNetMs = (System.nanoTime() - t0) / 1_000_000L;
             if (result == null) return null;
 
             byte[] respBytes = result.getResponse();
@@ -167,6 +192,7 @@ public class HttpSender {
             }
             return new Response(status, headers, body, respBytes);
         } catch (Exception e) {
+            lastNetMs = (System.nanoTime() - t0) / 1_000_000L;
             return null;
         }
     }

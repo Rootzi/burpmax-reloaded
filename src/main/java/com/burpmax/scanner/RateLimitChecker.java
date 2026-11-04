@@ -211,7 +211,7 @@ public class RateLimitChecker {
         for (int i = 0; i < PROBE_COUNT; i++) {
             long start = System.currentTimeMillis();
             com.burpmax.active.HttpSender.Response resp = sender.send(service, originalRequest);
-            long elapsed = System.currentTimeMillis() - start;
+            long elapsed = sender.lastNetMs();
 
             if (resp == null) return null;  // connection failure - inconclusive (or RiskGuard refused)
 

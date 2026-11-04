@@ -41,6 +41,7 @@ public class UIBuilder {
     private final Runnable                pauseToggle;  // supplied by BurpExtender
 
     private com.burpmax.active.ActiveScanner activeScanner;
+    private final java.awt.Dimension[] lastDialogSize = {null};
     private JButton      activeScanBtn;
     private JLabel       activeScanStatus;
     private JProgressBar activeScanProgress;
@@ -83,6 +84,13 @@ public class UIBuilder {
     private final EvidencePanel evidencePanel = new EvidencePanel();
     private final JButton   repeaterMoreBtn;
     private final JButton   hostsBtn;
+    private final JButton   undoBtn = ghostBtn("\u21B6 Undo");
+    private final JButton   redoBtn = ghostBtn("\u21B7 Redo");
+    private HostGroupView hostView;
+    private final JButton   scanPauseBtn = ghostBtn("\u23F8 Pause scan");
+    private final JButton   scanLogBtn   = ghostBtn("\uD83D\uDCDC Request log");
+    private final JButton   reverifyBtn = ghostBtn("\u21BB Re-verify");
+    private final AnalystHistory history = new AnalystHistory(this::historyChanged);
     private final JPanel    affStrip  = new JPanel(new BorderLayout());
     private final JLabel    affCount  = darkLabel("");
     private final JLabel    cvssLabel = darkLabel("");  // shows CVSS 4.0 score + vector
@@ -186,6 +194,7 @@ public class UIBuilder {
         JButton pdfBtn   = primaryBtn("PDF");
         JButton wordBtn  = primaryBtn("Word");
         JButton diffBtn  = ghostBtn("Scan Diff");
+        JButton moreExpBtn = primaryBtn("MD / JSON \u25BE");
 
         // Save-path tooltip so users know where the file goes
         saveBtn.setToolTipText(
@@ -221,12 +230,25 @@ public class UIBuilder {
             int r = JOptionPane.showConfirmDialog(panel,
                     "Clear all findings? This cannot be undone.",
                     "Clear All", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (r == JOptionPane.YES_OPTION) store.clear();
+            if (r == JOptionPane.YES_OPTION) { store.clear(); history.clear(); }
         });
         csvBtn.addActionListener(e  -> doExport("csv"));
         pdfBtn.addActionListener(e  -> doExport("pdf"));
         wordBtn.addActionListener(e -> doExport("docx"));
         diffBtn.addActionListener(e -> doScanDiff());
+        moreExpBtn.addActionListener(e -> {
+            JPopupMenu m = new JPopupMenu();
+            JMenuItem md = new JMenuItem("Export Markdown (.md)");
+            md.addActionListener(x -> doExport("md"));
+            JMenuItem js = new JMenuItem("Export JSON (.json)");
+            js.addActionListener(x -> doExport("json"));
+            m.add(md); m.add(js);
+            m.show(moreExpBtn, 0, moreExpBtn.getHeight());
+        });
+        undoBtn.addActionListener(e -> doUndo());
+        redoBtn.addActionListener(e -> doRedo());
+        historyChanged();
+        installUndoKeys();
 
         // Save always prompts for file location so the user is always in control.
         // After a save the button tooltip shows the chosen path.
@@ -243,12 +265,16 @@ public class UIBuilder {
         row1Right.add(saveBtn);
         row1Right.add(loadBtn);
         row1Right.add(Box.createHorizontalStrut(6));
+        row1Right.add(undoBtn);
+        row1Right.add(redoBtn);
+        row1Right.add(Box.createHorizontalStrut(6));
         row1Right.add(clearBtn);
         row1Right.add(pauseBtn);
         row1Right.add(Box.createHorizontalStrut(6));
         row1Right.add(csvBtn);
         row1Right.add(pdfBtn);
         row1Right.add(wordBtn);
+        row1Right.add(moreExpBtn);
         row1Right.add(diffBtn);
 
         row1.add(brandPanel, BorderLayout.WEST);
@@ -290,7 +316,7 @@ public class UIBuilder {
             activeScanStatus.setText(String.format(
                     "\u26a0  Interrupted scan: %d endpoints remaining (%d%% done)"
                     + "  \u2014  click Active Scan to resume",
-                    existing.pendingUrls.size(), existing.percentComplete()));
+                    existing.remaining(), existing.percentComplete()));
             activeScanStatus.setForeground(new Color(0xFB, 0xBF, 0x24));
             activeScanStatus.setVisible(true);
         }
@@ -299,6 +325,19 @@ public class UIBuilder {
         JPanel row2Left = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         row2Left.setOpaque(false);
         row2Left.add(activeScanBtn);
+        scanPauseBtn.setVisible(false);
+        scanLogBtn.setVisible(false);
+        scanPauseBtn.setToolTipText("Pause in place; resume continues exactly where it stopped");
+        scanPauseBtn.addActionListener(e -> {
+            if (activeScanner == null) return;
+            if (activeScanner.isPaused()) activeScanner.resume(); else activeScanner.pause();
+        });
+        scanLogBtn.setToolTipText("Every request the scan sent (or was stopped from sending)");
+        scanLogBtn.addActionListener(e -> showRequestLogMenu());
+        row2Left.add(Box.createHorizontalStrut(8));
+        row2Left.add(scanPauseBtn);
+        row2Left.add(Box.createHorizontalStrut(4));
+        row2Left.add(scanLogBtn);
 
         JPanel row2Center = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         row2Center.setOpaque(false);
@@ -459,7 +498,30 @@ public class UIBuilder {
             }
         });
 
-        leftPanel.add(tableScroll, BorderLayout.CENTER);
+        // Findings table <-> by-host tree, switched from a small toggle row.
+        hostView = new HostGroupView(
+                f -> populateDetail(f),
+                (inv, x, y, fs) -> showHostsMenuAt(inv, x, y, fs));
+        CardLayout viewCards = new CardLayout();
+        JPanel viewHost = new JPanel(viewCards);
+        viewHost.setOpaque(false);
+        viewHost.add(tableScroll, "table");
+        viewHost.add(hostView, "hosts");
+        JToggleButton byHost = new JToggleButton("Group by host");
+        byHost.setFont(Widgets.UI_SMALL);
+        byHost.setFocusPainted(false);
+        byHost.setBackground(C_SURFACE);
+        byHost.setForeground(C_TEXT_DIM);
+        byHost.setToolTipText("Switch between the flat findings table and a per-host view");
+        byHost.addActionListener(e -> {
+            viewCards.show(viewHost, byHost.isSelected() ? "hosts" : "table");
+            if (byHost.isSelected()) hostView.setFindings(visibleFindings);
+        });
+        JPanel viewBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        viewBar.setBackground(C_SURFACE);
+        viewBar.add(byHost);
+        leftPanel.add(viewBar, BorderLayout.NORTH);
+        leftPanel.add(viewHost, BorderLayout.CENTER);
 
         // Right: detail panel
         JPanel rightPanel = buildDetailPanel();
@@ -513,7 +575,9 @@ public class UIBuilder {
         hostsBtn.addActionListener(e -> {
             if (selectedFinding != null) showHostsMenu(hostsBtn, List.of(selectedFinding));
         });
-        btnBar.add(repeaterBtn); btnBar.add(repeaterMoreBtn);
+        reverifyBtn.setToolTipText("Replay the proof request once (safety rules still apply) and check the evidence again");
+        reverifyBtn.addActionListener(e -> doReverify());
+        btnBar.add(repeaterBtn); btnBar.add(repeaterMoreBtn); btnBar.add(reverifyBtn);
         btnBar.add(fpBtn); btnBar.add(overrideBtn); btnBar.add(copyBtn); btnBar.add(hostsBtn);
 
         // ── CVSS + Status row ─────────────────────────────────────────────────
@@ -542,18 +606,18 @@ public class UIBuilder {
             if (selectedFinding != null && !noteUpdating) {
                 String sel = (String) statusCombo.getSelectedItem();
                 if (sel != null) {
-                    selectedFinding.remediationStatus = sel;
-                    // Keep suppressed flag in sync: FP status = suppressed
-                    if (com.burpmax.model.Finding.STATUS_FP.equals(sel)) {
-                        selectedFinding.suppressed = true;
-                        fpBanner.setVisible(true);
-                        fpBtn.setText("Unmark FP");
-                    } else if (selectedFinding.suppressed
-                            && !com.burpmax.model.Finding.STATUS_FP.equals(sel)) {
-                        selectedFinding.suppressed = false;
-                        fpBanner.setVisible(false);
-                        fpBtn.setText("Mark as FP");
-                    }
+                    final Finding sf = selectedFinding;
+                    history.apply("Status \u2192 " + sel, List.of(sf), () -> {
+                        sf.remediationStatus = sel;
+                        // Keep suppressed flag in sync: FP status = suppressed
+                        if (com.burpmax.model.Finding.STATUS_FP.equals(sel)) {
+                            sf.suppressed = true;
+                        } else if (sf.suppressed) {
+                            sf.suppressed = false;
+                        }
+                    });
+                    fpBanner.setVisible(sf.suppressed);
+                    fpBtn.setText(sf.suppressed ? "Unmark FP" : "Mark as FP");
                     tblModel.fireTableDataChanged();
                     session.scheduleAutoSave();
                 }
@@ -566,6 +630,8 @@ public class UIBuilder {
         JPanel content = new JPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBackground(C_HEADER_BG);
+        // BoxLayout positions children by their alignmentX; mixed values shift sections sideways.
+        for (JComponent c : new JComponent[]{titleRow, fpBanner, btnBar, metaRow}) c.setAlignmentX(Component.LEFT_ALIGNMENT);
         content.add(titleRow);
         content.add(fpBanner);
         content.add(btnBar);
@@ -586,6 +652,7 @@ public class UIBuilder {
         styleScrollPane(affScroll);
         affStrip.add(affScroll, BorderLayout.CENTER);
         affStrip.setVisible(false);
+        affStrip.setAlignmentX(Component.LEFT_ALIGNMENT);
         content.add(affStrip);
 
         // Analyst note
@@ -612,7 +679,20 @@ public class UIBuilder {
             public void removeUpdate(DocumentEvent e)  { update(); }
             public void changedUpdate(DocumentEvent e) { update(); }
         });
+        noteStrip.setAlignmentX(Component.LEFT_ALIGNMENT);
         content.add(noteStrip);
+        noteArea.addFocusListener(new java.awt.event.FocusAdapter() {
+            private Finding target;
+            private List<AnalystHistory.Snap> snap;
+            @Override public void focusGained(java.awt.event.FocusEvent e) {
+                target = selectedFinding;
+                snap = target == null ? null : history.snapshot(List.of(target));
+            }
+            @Override public void focusLost(java.awt.event.FocusEvent e) {
+                if (target != null && snap != null) history.record("Edit note", List.of(target), snap);
+                target = null; snap = null;
+            }
+        });
 
         JScrollPane detailScroll = new JScrollPane(content);
         styleScrollPane(detailScroll);
@@ -730,6 +810,7 @@ public class UIBuilder {
                 .toList();
 
         tblModel.setFindings(visibleFindings);
+        if (hostView != null) hostView.setFindings(visibleFindings);
 
         // Summary badges — when a filter is active, lblTotal shows the filtered count
         // so it matches the summary label. Without a filter it shows all non-suppressed.
@@ -890,6 +971,53 @@ public class UIBuilder {
         m.show(repeaterMoreBtn, 0, repeaterMoreBtn.getHeight());
     }
 
+    private void doReverify() {
+        if (selectedFinding == null) return;
+        final Finding f = selectedFinding;
+        final IHttpService svc = serviceFor(f);
+        final byte[] req = reverifyRequest(f);
+        reverifyBtn.setEnabled(false);
+        reverifyBtn.setText("Re-verifying\u2026");
+        new SwingWorker<com.burpmax.active.Reverifier.Result, Void>() {
+            @Override protected com.burpmax.active.Reverifier.Result doInBackground() {
+                return com.burpmax.active.Reverifier.run(callbacks, svc, req, f);
+            }
+            @Override protected void done() {
+                reverifyBtn.setEnabled(true);
+                reverifyBtn.setText("\u21BB Re-verify");
+                try { showReverifyResult(f, get()); }
+                catch (Exception ex) { toast("Re-verify failed: " + ex.getMessage()); }
+            }
+        }.execute();
+    }
+
+    private void showReverifyResult(Finding f, com.burpmax.active.Reverifier.Result r) {
+        String head = switch (r.verdict()) {
+            case STILL_PRESENT   -> "STILL PRESENT";
+            case NOT_REPRODUCED  -> "NOT REPRODUCED";
+            case INCONCLUSIVE    -> "NEEDS A HUMAN LOOK";
+        };
+        StringBuilder msg = new StringBuilder(head).append("\n\n").append(r.summary());
+        if (!r.found().isEmpty())   msg.append("\n\nFound:   ").append(String.join("  |  ", r.found()));
+        if (!r.missing().isEmpty()) msg.append("\nMissing: ").append(String.join("  |  ", r.missing()));
+        java.util.List<String> hits = r.found();
+        if (r.response() != null) {
+            msg.append("\n\n\u2500\u2500 Response (trimmed) \u2500\u2500\n").append(
+                    com.burpmax.evidence.Snippet.toPlain(com.burpmax.evidence.Snippet.response(r.response(), hits)));
+        }
+        JTextArea ta = new JTextArea(msg.toString(), 18, 72);
+        ta.setEditable(false);
+        ta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        ta.setLineWrap(true);
+        ta.setCaretPosition(0);
+        Object[] opts = {"Close", "Copy result", "Open full response", "Send to Repeater"};
+        int c = JOptionPane.showOptionDialog(panel, new JScrollPane(ta), "Re-verify \u2014 " + f.name,
+                JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, opts, opts[0]);
+        if (c == 1) copyText(msg.toString(), "re-verify result");
+        else if (c == 2 && r.response() != null) FullMessageDialog.show(panel, f.name + " (re-verify)", r.request(), r.response(), true);
+        else if (c == 3) sendToRepeater(false);
+    }
+
     private void copyCurl(byte[] req) {
         IHttpService svc = selectedFinding != null ? serviceFor(selectedFinding) : null;
         if (req == null || svc == null) { toast("No request available for curl"); return; }
@@ -931,6 +1059,30 @@ public class UIBuilder {
 
     private void showHostsMenuAt(Component invoker, int x, int y, java.util.Collection<Finding> findings) {
         JPopupMenu m = new JPopupMenu();
+        final List<Finding> fl = new ArrayList<>(findings);
+        String n = fl.size() > 1 ? fl.size() + " selected" : "finding";
+        JMenuItem fp = new JMenuItem("Mark " + n + " as false positive");
+        fp.addActionListener(e -> bulkChange("Mark false positive", fl, f -> {
+            f.suppressed = true; f.remediationStatus = Finding.STATUS_FP; }));
+        m.add(fp);
+        JMenu st = new JMenu("Set status of " + n);
+        for (String s0 : Finding.ALL_STATUSES) {
+            if (Finding.STATUS_FP.equals(s0)) continue;
+            JMenuItem it = new JMenuItem(s0);
+            it.addActionListener(e -> bulkChange("Status \u2192 " + s0, fl, f -> {
+                f.remediationStatus = s0; f.suppressed = false; }));
+            st.add(it);
+        }
+        m.add(st);
+        JMenu sv = new JMenu("Override severity of " + n);
+        for (String s1 : new String[]{Finding.SEV_CRITICAL, Finding.SEV_HIGH, Finding.SEV_MEDIUM, Finding.SEV_LOW, Finding.SEV_INFO, "Remove override"}) {
+            JMenuItem it = new JMenuItem(s1);
+            it.addActionListener(e -> bulkChange("Severity \u2192 " + s1, fl,
+                    f -> f.severityOverride = "Remove override".equals(s1) ? null : s1));
+            sv.add(it);
+        }
+        m.add(sv);
+        m.addSeparator();
         addHostItem(m, "Copy hosts as URLs", findings, com.burpmax.util.HostFormats.Format.URLS);
         addHostItem(m, "Copy hostnames (deduplicated)", findings, com.burpmax.util.HostFormats.Format.HOSTNAMES);
         addHostItem(m, "Copy host:port", findings, com.burpmax.util.HostFormats.Format.HOST_PORTS);
@@ -990,18 +1142,73 @@ public class UIBuilder {
 
     private void toggleFP() {
         if (selectedFinding == null) return;
-        selectedFinding.suppressed = !selectedFinding.suppressed;
-        if (selectedFinding.suppressed) {
-            selectedFinding.remediationStatus = com.burpmax.model.Finding.STATUS_FP;
-        } else if (com.burpmax.model.Finding.STATUS_FP.equals(selectedFinding.remediationStatus)) {
-            selectedFinding.remediationStatus = com.burpmax.model.Finding.STATUS_OPEN;
+        final Finding f = selectedFinding;
+        history.apply(f.suppressed ? "Unmark false positive" : "Mark as false positive", List.of(f), () -> {
+            f.suppressed = !f.suppressed;
+            if (f.suppressed) {
+                f.remediationStatus = com.burpmax.model.Finding.STATUS_FP;
+            } else if (com.burpmax.model.Finding.STATUS_FP.equals(f.remediationStatus)) {
+                f.remediationStatus = com.burpmax.model.Finding.STATUS_OPEN;
+            }
+        });
+        refreshAfterAnalystChange();
+    }
+
+    /** Re-sync the detail pane and table after an analyst field changed (also used by undo/redo). */
+    private void refreshAfterAnalystChange() {
+        if (selectedFinding != null) {
+            fpBtn.setText(selectedFinding.suppressed ? "Unmark FP" : "Mark as FP");
+            fpBanner.setVisible(selectedFinding.suppressed);
+            noteUpdating = true;
+            try {
+                statusCombo.setSelectedItem(selectedFinding.remediationStatus);
+                String n = selectedFinding.analystNote != null ? selectedFinding.analystNote : "";
+                if (!n.equals(noteArea.getText())) noteArea.setText(n);
+            } finally { noteUpdating = false; }
+            populateDetail(selectedFinding);
         }
-        fpBtn.setText(selectedFinding.suppressed ? "Unmark FP" : "Mark as FP");
-        fpBanner.setVisible(selectedFinding.suppressed);
-        noteUpdating = true;
-        try { statusCombo.setSelectedItem(selectedFinding.remediationStatus); }
-        finally { noteUpdating = false; }
+        session.scheduleAutoSave();
         refresh();
+    }
+
+    private void installUndoKeys() {
+        // Ctrl+Z / Ctrl+Y, but never while the analyst is typing in a text box (that has its own undo).
+        Action undoA = new AbstractAction() { @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+            if (!(KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() instanceof javax.swing.text.JTextComponent)) doUndo(); } };
+        Action redoA = new AbstractAction() { @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+            if (!(KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() instanceof javax.swing.text.JTextComponent)) doRedo(); } };
+        int m;
+        try { m = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx(); }
+        catch (UnsupportedOperationException e) { m = java.awt.event.InputEvent.CTRL_DOWN_MASK; }
+        InputMap im = panel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Z, m), "bm-undo");
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Y, m), "bm-redo");
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Z, m | java.awt.event.InputEvent.SHIFT_DOWN_MASK), "bm-redo");
+        panel.getActionMap().put("bm-undo", undoA);
+        panel.getActionMap().put("bm-redo", redoA);
+    }
+
+    private void historyChanged() {
+        undoBtn.setEnabled(history.canUndo());
+        redoBtn.setEnabled(history.canRedo());
+        undoBtn.setToolTipText(history.canUndo() ? "Undo: " + history.undoLabel() + "  (Ctrl+Z)" : "Nothing to undo");
+        redoBtn.setToolTipText(history.canRedo() ? "Redo: " + history.redoLabel() + "  (Ctrl+Y)" : "Nothing to redo");
+    }
+
+    private void doUndo() {
+        String l = history.undo();
+        if (l != null) { refreshAfterAnalystChange(); toast("Undid: " + l); }
+    }
+
+    private void doRedo() {
+        String l = history.redo();
+        if (l != null) { refreshAfterAnalystChange(); toast("Redid: " + l); }
+    }
+
+    /** Apply one analyst change to many findings as a single undo step. */
+    private void bulkChange(String label, List<Finding> fs, java.util.function.Consumer<Finding> change) {
+        history.apply(label + " (" + fs.size() + ")", fs, () -> { for (Finding f : fs) change.accept(f); });
+        refreshAfterAnalystChange();
     }
 
     private void doOverride() {
@@ -1012,9 +1219,10 @@ public class UIBuilder {
                 "Select severity override:", "Override Severity",
                 JOptionPane.PLAIN_MESSAGE, null, options, selectedFinding.effectiveSeverity());
         if (choice == null) return;
-        selectedFinding.severityOverride = "Remove Override".equals(choice) ? null : choice;
-        populateDetail(selectedFinding);
-        refresh();
+        final Finding of = selectedFinding;
+        final String chosen = "Remove Override".equals(choice) ? null : choice;
+        history.apply("Severity override", List.of(of), () -> of.severityOverride = chosen);
+        refreshAfterAnalystChange();
     }
 
     private void copyUrl() {
@@ -1186,6 +1394,10 @@ public class UIBuilder {
             try {
                 if ("csv".equals(fmt)) {
                     com.burpmax.export.CsvExporter.export(finalFindings, path);
+                } else if ("md".equals(fmt)) {
+                    com.burpmax.export.StructuredExporter.markdown(finalFindings, path);
+                } else if ("json".equals(fmt)) {
+                    com.burpmax.export.StructuredExporter.json(finalFindings, path);
                 } else if ("pdf".equals(fmt)) {
                     com.burpmax.export.PdfExporter.export(finalFindings, path, finalMeta);
                 } else {
@@ -1478,6 +1690,8 @@ public class UIBuilder {
         if (activeScanner != null && activeScanner.isRunning()) {
             // Cancel running scan
             activeScanner.cancel();
+            scanPauseBtn.setVisible(false);
+            scanLogBtn.setVisible(activeScanner.getAuditLog().size() > 0);
             activeScanBtn.setText("⚡ Active Scan");
             activeScanBtn.setBackground(new Color(0x6B, 0x21, 0xA8));
             activeScanProgress.setIndeterminate(false);
@@ -1545,7 +1759,7 @@ public class UIBuilder {
             resumeBody.setMinimumSize(new Dimension(560, 0));
 
             // Stat pill row: "138 remaining  |  0 total  |  100% done"
-            int pending  = existing.pendingUrls.size();
+            int pending  = existing.remaining();
             int total    = existing.totalTargets;
             int pct      = existing.percentComplete();
 
@@ -1688,6 +1902,12 @@ public class UIBuilder {
         final int[] resultPollSec = {30};
         final String[] resultOobUrl = {"https://oast.pro"};
         final boolean[] confirmed   = {false};
+        final int[][] resultBudgets = {null};
+        final boolean[] resultReplayRo = {true};
+        int[][] lastScanBudgets = {activeScanner != null ? new int[]{
+                activeScanner.getRiskGuard().budgetMessaging(), activeScanner.getRiskGuard().budgetAuth(),
+                activeScanner.getRiskGuard().budgetOther()} : null};
+        boolean[] lastScanReplayReadOnly = {activeScanner == null || activeScanner.isReplayReadOnly()};
         // Auth result holders
         final boolean[] resultAuthEnabled = {false};
         final int[]     resultAuthMode    = {0};   // 0=static, 1=login
@@ -1710,7 +1930,7 @@ public class UIBuilder {
             ? new javax.swing.JDialog((java.awt.Frame) owner, "Active Scan", true)
             : new javax.swing.JDialog((java.awt.Dialog) owner, "Active Scan", true);
         dlg.setUndecorated(false);
-        dlg.setResizable(false);
+        dlg.setResizable(true);
 
         // ── Root panel ───────────────────────────────────────────────────────
         javax.swing.JPanel root = new javax.swing.JPanel();
@@ -1719,7 +1939,7 @@ public class UIBuilder {
         root.setBorder(BorderFactory.createLineBorder(C_BORDER, 1));
 
         // ── Body panel (padded) ───────────────────────────────────────────────
-        javax.swing.JPanel body = new javax.swing.JPanel();
+        javax.swing.JPanel body = new Widgets.TrackingPanel();
         body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
         body.setBackground(C_SURFACE);
         body.setBorder(BorderFactory.createEmptyBorder(20, 20, 16, 20));
@@ -1911,7 +2131,7 @@ public class UIBuilder {
             boolean selfHosted = oobBackendBox.getSelectedIndex() == 1;
             oobServerField.setVisible(selfHosted);
             oobDetailPanel.revalidate();
-            dlg.pack();
+            body.revalidate(); body.repaint();
         });
         oobServerField.setVisible(false);
 
@@ -1921,7 +2141,7 @@ public class UIBuilder {
             oobOn[0] = on;
             resultOob[0] = on;
             oobDetailPanel.setVisible(on);
-            dlg.pack();
+            body.revalidate(); body.repaint();
         });
 
         // ── Assemble body ─────────────────────────────────────────────────────
@@ -2102,8 +2322,7 @@ public class UIBuilder {
         authToggle.addActionListener(ev -> {
             boolean on = authToggle.isSelected();
             authDetailPanel.setVisible(on);
-            dlg.pack();
-            dlg.setLocationRelativeTo(panel);
+            body.revalidate(); body.repaint();
         });
 
         body.add(Box.createVerticalStrut(12));
@@ -2113,57 +2332,26 @@ public class UIBuilder {
         body.add(Box.createVerticalStrut(4));
         body.add(authDetailPanel);
 
-        // ── Scan policy section ───────────────────────────────────────────────
+        // ── Scan policy section (catalog-driven, collapsible; ticked = skipped) ──
         javax.swing.JSeparator sep3 = new javax.swing.JSeparator();
         sep3.setForeground(C_BORDER);
         sep3.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
         sep3.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 1));
 
-        javax.swing.JCheckBox policyToggle = new javax.swing.JCheckBox("Scan policy (disable probes)");
-        policyToggle.setFont(FONT_UI_B);
-        policyToggle.setForeground(C_TEXT_HEAD);
-        policyToggle.setBackground(C_SURFACE);
-        policyToggle.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-
-        javax.swing.JPanel policyToggleRow = new javax.swing.JPanel(new java.awt.BorderLayout());
-        policyToggleRow.setBackground(C_SURFACE);
-        policyToggleRow.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        policyToggleRow.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 24));
-        policyToggleRow.add(policyToggle, java.awt.BorderLayout.WEST);
-
-        javax.swing.JPanel policyDetailPanel = new javax.swing.JPanel();
-        policyDetailPanel.setLayout(new java.awt.GridLayout(0, 3, 4, 2));
-        policyDetailPanel.setBackground(C_SURFACE);
-        policyDetailPanel.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-
-        // All probe names that can be selectively disabled
-        String[] probeNames = com.burpmax.active.ActiveScanner.ALL_PROBE_NAMES
-                .stream().sorted().toArray(String[]::new);
-        java.util.Map<String, javax.swing.JCheckBox> probeCbs = new java.util.LinkedHashMap<>();
-        for (String name : probeNames) {
-            javax.swing.JCheckBox cb = new javax.swing.JCheckBox(name);
-            cb.setFont(FONT_TINY);
-            cb.setForeground(C_TEXT_HEAD);
-            cb.setBackground(C_SURFACE);
-            // Restore previously selected skips from last scan
-            cb.setSelected(resultSkipProbes.get().contains(name));
-            policyDetailPanel.add(cb);
-            probeCbs.put(name, cb);
-        }
-        policyDetailPanel.setVisible(false);
-
-        policyToggle.addActionListener(ev -> {
-            policyDetailPanel.setVisible(policyToggle.isSelected());
-            dlg.pack();
-            dlg.setLocationRelativeTo(panel);
-        });
+        final Runnable relayout = () -> { body.revalidate(); body.repaint(); };
+        final ScanPolicyPanel policyPanel = new ScanPolicyPanel(
+                callbacks,
+                activeScanner != null ? activeScanner.getSkipProbes() : null,
+                lastScanBudgets[0],
+                lastScanReplayReadOnly[0],
+                null,
+                relayout);
+        CollapsibleSection policySection = new CollapsibleSection("Scan policy  \u2014  modules, profiles, limits", policyPanel, true);
 
         body.add(Box.createVerticalStrut(12));
         body.add(sep3);
         body.add(Box.createVerticalStrut(8));
-        body.add(policyToggleRow);
-        body.add(Box.createVerticalStrut(4));
-        body.add(policyDetailPanel);
+        body.add(policySection);
 
         // ── Footer bar ────────────────────────────────────────────────────────
         javax.swing.JPanel footer = new javax.swing.JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 10));
@@ -2207,9 +2395,9 @@ public class UIBuilder {
             resultLoginReq[0]    = loginReqArea.getText();  // do NOT trim - preserves required trailing CRLF
             resultHealthUrl[0]   = healthField.getText().trim();
             // Capture scan policy (disabled probes)
-            java.util.Set<String> skip = new java.util.HashSet<>();
-            probeCbs.forEach((name, cb) -> { if (cb.isSelected()) skip.add(name); });
-            resultSkipProbes.set(skip);
+            resultSkipProbes.set(new java.util.HashSet<>(policyPanel.skips()));
+            resultBudgets[0] = policyPanel.budgets();
+            resultReplayRo[0] = policyPanel.replayReadOnly();
             dlg.dispose();
         });
 
@@ -2219,11 +2407,25 @@ public class UIBuilder {
         footer.add(cancelBtn);
         footer.add(startBtn);
 
-        root.add(body,   java.awt.BorderLayout.CENTER);
+        javax.swing.JScrollPane bodyScroll = new javax.swing.JScrollPane(body,
+                javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        bodyScroll.setBorder(null);
+        bodyScroll.getVerticalScrollBar().setUnitIncrement(16);
+        bodyScroll.getViewport().setBackground(C_SURFACE);
+        root.add(bodyScroll, java.awt.BorderLayout.CENTER);
         root.add(footer, java.awt.BorderLayout.SOUTH);
         dlg.setContentPane(root);
         dlg.pack();
-        dlg.setMinimumSize(dlg.getSize());
+        // Fit the screen, never taller than it; remember the last size the user chose.
+        java.awt.Rectangle scr = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        int dw = lastDialogSize[0] != null ? lastDialogSize[0].width  : Math.max(560, Math.min(dlg.getWidth(), scr.width - 80));
+        int dh = lastDialogSize[0] != null ? lastDialogSize[0].height : Math.min(dlg.getHeight(), (int) (scr.height * 0.85));
+        dlg.setSize(Math.min(dw, scr.width), Math.min(dh, scr.height));
+        dlg.setMinimumSize(new Dimension(520, 360));
+        dlg.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosed(java.awt.event.WindowEvent e) { lastDialogSize[0] = dlg.getSize(); }
+        });
         dlg.setLocationRelativeTo(panel);
         dlg.setVisible(true);   // blocks until disposed
 
@@ -2345,6 +2547,10 @@ public class UIBuilder {
 
         // Apply scan policy (user-selected probe exclusions)
         activeScanner.setSkipProbes(resultSkipProbes.get());
+        if (resultBudgets[0] != null) {
+            activeScanner.setWriteBudgets(resultBudgets[0][0], resultBudgets[0][1], resultBudgets[0][2]);
+        }
+        activeScanner.setReplayReadOnly(resultReplayRo[0]);
 
         activeScanner.setOnStatus(msg -> SwingUtilities.invokeLater(() -> {
             activeScanStatus.setText(msg);
@@ -2364,6 +2570,7 @@ public class UIBuilder {
             activeScanProgress.setIndeterminate(false);
             activeScanProgress.setVisible(false);
             activeScanProgress.setValue(0);
+            syncScanButtons();
             // Cancel any previous hide timer before starting a new one
             if (statusHideTimer != null) statusHideTimer.stop();
             statusHideTimer = new javax.swing.Timer(10_000, ev -> {
@@ -2374,6 +2581,11 @@ public class UIBuilder {
             statusHideTimer.start();
             refresh();
         }));
+
+        activeScanner.getFlow().setOnState(st -> SwingUtilities.invokeLater(() -> updatePauseButton(st)));
+        scanPauseBtn.setVisible(true);
+        scanLogBtn.setVisible(true);
+        updatePauseButton(com.burpmax.active.ScanFlow.State.RUNNING);
 
         // Update button to show cancel option
         activeScanBtn.setText("⏹ Cancel Scan");
@@ -2433,6 +2645,46 @@ public class UIBuilder {
         } else {
             activeScanner.startAsync();
         }
+    }
+
+    /** Show/hide the pause and log buttons to match the scanner's state. */
+    private void syncScanButtons() {
+        boolean running = activeScanner != null && activeScanner.isRunning();
+        scanPauseBtn.setVisible(running);
+        scanLogBtn.setVisible(activeScanner != null && activeScanner.getAuditLog().size() > 0);
+        if (running) updatePauseButton(activeScanner.getFlow().state());
+    }
+
+    private void updatePauseButton(com.burpmax.active.ScanFlow.State st) {
+        switch (st) {
+            case RUNNING        -> { scanPauseBtn.setText("\u23F8 Pause scan");  scanPauseBtn.setForeground(C_BTN_GHOST_FG); }
+            case PAUSED_BY_USER -> { scanPauseBtn.setText("\u25B6 Resume scan"); scanPauseBtn.setForeground(new Color(0x6E, 0xE7, 0xB7)); }
+            case PAUSED_AUTO    -> { scanPauseBtn.setText("\u25B6 Resume now");  scanPauseBtn.setForeground(new Color(0xFB, 0xBF, 0x24)); }
+        }
+    }
+
+    private void showRequestLogMenu() {
+        if (activeScanner == null) return;
+        final com.burpmax.active.AuditLog log = activeScanner.getAuditLog();
+        JPopupMenu m = new JPopupMenu();
+        JMenuItem head = new JMenuItem(log.summary());
+        head.setEnabled(false);
+        m.add(head);
+        m.addSeparator();
+        JMenuItem exp = new JMenuItem("Export request log (CSV)\u2026");
+        exp.addActionListener(e -> {
+            JFileChooser ch = new JFileChooser();
+            ch.setSelectedFile(new File("burpmax_request_log.csv"));
+            if (ch.showSaveDialog(panel) != JFileChooser.APPROVE_OPTION) return;
+            try {
+                log.exportCsv(ch.getSelectedFile().getAbsolutePath());
+                toast("Saved " + log.size() + " log entries");
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(panel, "Could not save the log: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        m.add(exp);
+        m.show(scanLogBtn, 0, scanLogBtn.getHeight());
     }
 
     private void setExtenderPaused(boolean p) {

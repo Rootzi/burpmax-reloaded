@@ -135,13 +135,13 @@ public class ConfirmationEngine {
         // Step 2: Re-send sleep payload — must be slow again
         long start2    = System.currentTimeMillis();
         HttpSender.Response re = sender.send(service, probeReq);
-        long elapsed2  = System.currentTimeMillis() - start2;
+        long elapsed2  = sender.lastNetMs();
         if (re == null || elapsed2 < sleepThresholdMs) return false;
 
         // Step 3: Send clean request — must be fast (< threshold + baseline)
         long start3    = System.currentTimeMillis();
         HttpSender.Response clean = sender.send(service, originalReq);
-        long elapsed3  = System.currentTimeMillis() - start3;
+        long elapsed3  = sender.lastNetMs();
         if (clean == null) return false;
 
         // Clean request must complete well BELOW the sleep threshold.

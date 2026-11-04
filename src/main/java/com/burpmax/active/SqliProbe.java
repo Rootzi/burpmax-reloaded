@@ -263,7 +263,7 @@ public class SqliProbe {
 
             long start = System.currentTimeMillis();
             HttpSender.Response resp = sender.send(ctx.service, probeReq);
-            long elapsed = System.currentTimeMillis() - start;
+            long elapsed = sender.lastNetMs();
 
             if (resp == null) continue;
 
@@ -366,7 +366,7 @@ public class SqliProbe {
     private static long measureBaseline(ProbeContext ctx, HttpSender sender) {
         long start = System.currentTimeMillis();
         HttpSender.Response r = sender.send(ctx.service, ctx.originalRequest);
-        return r != null ? System.currentTimeMillis() - start : -1;
+        return r != null ? sender.lastNetMs() : -1;
     }
 
     private static double similarity(int a, int b) {
