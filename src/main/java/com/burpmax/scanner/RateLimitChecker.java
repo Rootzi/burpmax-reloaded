@@ -206,14 +206,16 @@ public class RateLimitChecker {
         boolean        rateLimitHeaderSeen = false;
         boolean        rateLimitedStatusSeen = false;
         boolean        lockoutBodySeen = false;
+        byte[]         lastRaw = null;
 
         for (int i = 0; i < PROBE_COUNT; i++) {
             long start = System.currentTimeMillis();
             com.burpmax.active.HttpSender.Response resp = sender.send(service, originalRequest);
             long elapsed = System.currentTimeMillis() - start;
 
-            if (resp == null) return null;  // connection failure - inconclusive
+            if (resp == null) return null;  // connection failure - inconclusive (or RiskGuard refused)
 
+            lastRaw = resp.raw();
             statusCodes.add(resp.statusCode());
             bodies.add(resp.body());
             responseTimes.add(elapsed);
@@ -278,10 +280,11 @@ public class RateLimitChecker {
             "with no rate-limiting headers (X-RateLimit-*, Retry-After), no 429/503 status, no " +
             "lockout body language, and no response-time throttling across all " + probesActuallySent +
             " probes. " + specificRisk,
-            "Active probe: " + probesActuallySent + " identical POST requests to " + url +
-            " - all returned HTTP " + statusCodes.get(0) + " with no rate-limit signal",
+            "Active probe: " + probesActuallySent + " identical requests to " + url +
+            " returned status sequence " + statusCodes + " (response times ms: " + responseTimes +
+            ") with no rate-limit header, 429/503, lockout wording or throttling",
             buildRemediation(url),
-            "CWE-307");
+            "CWE-307").withTraffic(originalRequest, lastRaw);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

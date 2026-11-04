@@ -80,7 +80,7 @@ class CsrfProbe {
                     "CWE-352", ctx.url, "csrf_token", "(absent)",
                     trunc(new String(ctx.originalRequest), 300),
                     "HTTP " + noCookieStatus + " returned without Cookie header",
-                    ctx.originalRequest, resp.raw(), -1L));
+                    probeReq, resp.raw(), -1L));
             }
         }
         return results;

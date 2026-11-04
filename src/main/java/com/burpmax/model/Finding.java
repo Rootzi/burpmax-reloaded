@@ -174,6 +174,29 @@ public class Finding {
         return affectedEndpoints.isEmpty() ? null : affectedEndpoints.get(0).parameter;
     }
 
+    /**
+     * Which substring triggered this finding and why. Computed once and cached on the primary
+     * endpoint entry. Active findings use the probe request/response; passive findings and
+     * findings restored from a session fall back to the captured traffic / saved probe pair.
+     */
+    public com.burpmax.evidence.Evidence primaryEvidence() {
+        if (affectedEndpoints.isEmpty()) return com.burpmax.evidence.Evidence.EMPTY;
+        EndpointEntry e = affectedEndpoints.get(0);
+        com.burpmax.evidence.Evidence ev = e.evidence;
+        if (ev == null) {
+            if (e.probeRequest != null || e.probeResponse != null) {
+                ev = com.burpmax.evidence.EvidenceExtractor.compute(
+                        name, e.payload, e.timingMs, e.probeRequest, e.probeResponse,
+                        e.rawResponse, this.evidence);
+            } else {
+                ev = com.burpmax.evidence.EvidenceExtractor.computePassive(
+                        name, this.evidence, e.rawRequest, e.rawResponse);
+            }
+            e.evidence = ev;
+        }
+        return ev;
+    }
+
     /** Observed timing delay for time-based findings, or -1. */
     public long primaryTimingMs() {
         return affectedEndpoints.isEmpty() ? -1L : affectedEndpoints.get(0).timingMs;
@@ -207,6 +230,7 @@ public class Finding {
 
     // ── Serialization ─────────────────────────────────────────────────────────
     public JSONObject toJson() {
+        primaryEvidence();   // make sure the "why flagged" data is computed so it is saved
         JSONObject o = new JSONObject();
         o.put("name",             name);
         o.put("severity",         severity);
@@ -237,6 +261,15 @@ public class Finding {
             if (e.payload   != null)     ej.put("payload",    e.payload);
             if (e.parameter != null)     ej.put("parameter",  e.parameter);
             if (e.timingMs  > 0)         ej.put("timing_ms",  e.timingMs);
+            com.burpmax.evidence.Evidence ev = e.evidence;
+            if (ev != null) {
+                JSONArray ra = new JSONArray(), qa = new JSONArray();
+                for (String m : ev.responseMatches()) ra.put(m);
+                for (String m : ev.requestMatches())  qa.put(m);
+                ej.put("ev_resp",  ra);
+                ej.put("ev_req",   qa);
+                ej.put("ev_logic", ev.logic());
+            }
             eps.put(ej);
         }
         o.put("affected_endpoints", eps);
@@ -294,9 +327,17 @@ public class Finding {
                 String pl    = ej.has("payload")   ? ej.optString("payload",   null) : null;
                 String param = ej.has("parameter") ? ej.optString("parameter", null) : null;
                 long   tms   = ej.has("timing_ms") ? ej.optLong("timing_ms", -1L) : -1L;
-                f.affectedEndpoints.add(new EndpointEntry(
+                EndpointEntry entry = new EndpointEntry(
                         ep, ej.optInt("status_code", 0), null, null, null,
-                        probeReq, probeResp, pl, param, tms));
+                        probeReq, probeResp, pl, param, tms);
+                if (ej.has("ev_logic")) {
+                    java.util.List<String> rh = new java.util.ArrayList<>(), qh = new java.util.ArrayList<>();
+                    JSONArray ra = ej.optJSONArray("ev_resp"), qa = ej.optJSONArray("ev_req");
+                    if (ra != null) for (int k = 0; k < ra.length(); k++) rh.add(String.valueOf(ra.get(k)));
+                    if (qa != null) for (int k = 0; k < qa.length(); k++) qh.add(String.valueOf(qa.get(k)));
+                    entry.evidence = new com.burpmax.evidence.Evidence(rh, qh, ej.optString("ev_logic", ""));
+                }
+                f.affectedEndpoints.add(entry);
             }
         }
         return f;
@@ -326,6 +367,8 @@ public class Finding {
         public final String payload;          // injected payload string
         public final String parameter;        // injection point name
         public final long   timingMs;         // observed delay for time-based findings (-1 = N/A)
+        /** Matched substrings + detection logic. Computed lazily when absent (passive / loaded). */
+        public volatile com.burpmax.evidence.Evidence evidence;
 
         /** Passive finding constructor — no probe-specific data. */
         public EndpointEntry(String endpoint, int statusCode,

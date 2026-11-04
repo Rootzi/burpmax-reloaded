@@ -80,6 +80,9 @@ public class UIBuilder {
     private final JTextArea remArea   = codeArea();
     private final JTextArea noteArea  = codeArea();
     private final JTextArea affArea   = codeArea();
+    private final EvidencePanel evidencePanel = new EvidencePanel();
+    private final JButton   repeaterMoreBtn;
+    private final JButton   hostsBtn;
     private final JPanel    affStrip  = new JPanel(new BorderLayout());
     private final JLabel    affCount  = darkLabel("");
     private final JLabel    cvssLabel = darkLabel("");  // shows CVSS 4.0 score + vector
@@ -132,6 +135,8 @@ public class UIBuilder {
         // Build non-overridable components inline
         table       = new JTable(tblModel);
         repeaterBtn = ghostBtn("Send to Repeater");
+        repeaterMoreBtn = ghostBtn("\u25BE");
+        hostsBtn    = ghostBtn("Copy hosts \u25BE");
         fpBtn       = ghostBtn("Mark as FP");
         overrideBtn = ghostBtn("Override Severity");
     }
@@ -436,6 +441,24 @@ public class UIBuilder {
             }
         });
 
+        // Right-click: act on the whole multi-selection (ctrl/shift-click to select several).
+        table.addMouseListener(new MouseAdapter() {
+            @Override public void mousePressed(MouseEvent e)  { maybeShow(e); }
+            @Override public void mouseReleased(MouseEvent e) { maybeShow(e); }
+            private void maybeShow(MouseEvent e) {
+                if (!e.isPopupTrigger()) return;
+                int row = table.rowAtPoint(e.getPoint());
+                if (row < 0) return;
+                if (!table.isRowSelected(row)) table.setRowSelectionInterval(row, row);
+                List<Finding> picked = new ArrayList<>();
+                for (int r : table.getSelectedRows()) {
+                    Finding f = tblModel.getFinding(table.convertRowIndexToModel(r));
+                    if (f != null) picked.add(f);
+                }
+                if (!picked.isEmpty()) showHostsMenuAt(table, e.getX(), e.getY(), picked);
+            }
+        });
+
         leftPanel.add(tableScroll, BorderLayout.CENTER);
 
         // Right: detail panel
@@ -478,12 +501,20 @@ public class UIBuilder {
         // Action buttons
         JPanel btnBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
         btnBar.setOpaque(false);
-        repeaterBtn.addActionListener(e -> sendToRepeater());
         fpBtn.addActionListener(e -> toggleFP());
         overrideBtn.addActionListener(e -> doOverride());
         JButton copyBtn = ghostBtn("Copy URL");
         copyBtn.addActionListener(e -> copyUrl());
-        btnBar.add(repeaterBtn); btnBar.add(fpBtn); btnBar.add(overrideBtn); btnBar.add(copyBtn);
+        repeaterBtn.addActionListener(e -> sendToRepeater(false));
+        repeaterBtn.setToolTipText("Send the exact request BurpMax sent for this finding (re-verify it)");
+        repeaterMoreBtn.setToolTipText("More: original request, copy as curl, raw copies");
+        repeaterMoreBtn.addActionListener(e -> showRepeaterMenu());
+        hostsBtn.setToolTipText("Copy the affected hosts of this finding");
+        hostsBtn.addActionListener(e -> {
+            if (selectedFinding != null) showHostsMenu(hostsBtn, List.of(selectedFinding));
+        });
+        btnBar.add(repeaterBtn); btnBar.add(repeaterMoreBtn);
+        btnBar.add(fpBtn); btnBar.add(overrideBtn); btnBar.add(copyBtn); btnBar.add(hostsBtn);
 
         // ── CVSS + Status row ─────────────────────────────────────────────────
         JPanel metaRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 4));
@@ -539,9 +570,10 @@ public class UIBuilder {
         content.add(fpBanner);
         content.add(btnBar);
         content.add(metaRow);
-        content.add(codeBlock("Description", descArea));
-        content.add(codeBlock("Evidence", evArea));
-        content.add(codeBlock("Remediation", remArea));
+        content.add(new CollapsibleSection("Evidence", evidencePanel, true));
+        content.add(new CollapsibleSection("Description", areaBody(descArea), true));
+        content.add(new CollapsibleSection("Remediation", areaBody(remArea), false));
+        content.add(new CollapsibleSection("Probe notes (raw text)", areaBody(evArea), false));
 
         // Affected endpoints strip
         affStrip.setOpaque(false);
@@ -726,10 +758,12 @@ public class UIBuilder {
     private void populateDetail(Finding f) {
         selectedFinding = f;
 
-        boolean hasReq = f.primaryRawRequest() != null && f.primaryHttpService() != null;
+        boolean hasReq = f.primaryProbeRequest() != null || f.primaryRawRequest() != null;
         repeaterBtn.setEnabled(hasReq);
-        repeaterBtn.setToolTipText(hasReq ? null
-                : "Request not available - only findings captured in this session can be sent to Repeater");
+        repeaterMoreBtn.setEnabled(hasReq);
+        repeaterBtn.setToolTipText(hasReq
+                ? "Send the exact request BurpMax sent for this finding (re-verify it)"
+                : "No request stored for this finding");
 
         detTitle.setText(f.name);
         String eff = f.effectiveSeverity();
@@ -740,6 +774,7 @@ public class UIBuilder {
                 BorderFactory.createLineBorder(SEV_BD.getOrDefault(eff, C_BORDER), 1),
                 BorderFactory.createEmptyBorder(2,8,2,8)));
 
+        evidencePanel.show(f);
         descArea.setText(f.description); descArea.setCaretPosition(0);
         evArea.setText(f.evidence);      evArea.setCaretPosition(0);
         remArea.setText(f.remediation);  remArea.setCaretPosition(0);
@@ -782,23 +817,175 @@ public class UIBuilder {
 
     // ── Actions ───────────────────────────────────────────────────────────────
 
-    private void sendToRepeater() {
-        if (selectedFinding == null) return;
-        try {
-            Object svcObj = selectedFinding.primaryHttpService();
-            byte[] req    = selectedFinding.primaryRawRequest();
-            if (svcObj == null || req == null) return;
+    /** The request to re-verify: the probe BurpMax sent if there is one, else the captured request. */
+    private byte[] reverifyRequest(Finding f) {
+        return f.primaryProbeRequest() != null ? f.primaryProbeRequest() : f.primaryRawRequest();
+    }
 
-            // Cast to IHttpService — safe because we stored the real Burp object
-            IHttpService svc = (IHttpService) svcObj;
-            callbacks.sendToRepeater(
-                    svc.getHost(), svc.getPort(),
+    /** Burp service for a finding; rebuilt from its URL when a restored session did not keep it. */
+    private IHttpService serviceFor(Finding f) {
+        Object o = f.primaryHttpService();
+        if (o instanceof IHttpService s) return s;
+        try {
+            java.net.URL u = new java.net.URL(f.url);
+            boolean https = u.getProtocol().equalsIgnoreCase("https");
+            int port = u.getPort() > 0 ? u.getPort() : u.getDefaultPort();
+            return callbacks.getHelpers().buildHttpService(u.getHost(), port, https);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void sendToRepeater(boolean original) {
+        if (selectedFinding == null) return;
+        byte[] req = original ? selectedFinding.primaryRawRequest() : reverifyRequest(selectedFinding);
+        IHttpService svc = serviceFor(selectedFinding);
+        if (req == null || svc == null) {
+            JOptionPane.showMessageDialog(panel,
+                    original ? "The original captured request is not stored for this finding."
+                             : "No request is stored for this finding.",
+                    "Send to Repeater", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        try {
+            callbacks.sendToRepeater(svc.getHost(), svc.getPort(),
                     svc.getProtocol().equalsIgnoreCase("https"),
-                    req, selectedFinding.name);
+                    req, original ? "orig: " + selectedFinding.name : selectedFinding.name);
         } catch (Exception e) {
             JOptionPane.showMessageDialog(panel, "Could not send to Repeater: " + e.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void showRepeaterMenu() {
+        if (selectedFinding == null) return;
+        Finding f = selectedFinding;
+        JPopupMenu m = new JPopupMenu();
+        boolean hasProbe = f.primaryProbeRequest() != null;
+        boolean hasOrig  = f.primaryRawRequest() != null;
+
+        JMenuItem orig = new JMenuItem("Send ORIGINAL captured request to Repeater");
+        orig.setEnabled(hasOrig && hasProbe);   // identical otherwise; the main button already does it
+        orig.addActionListener(e -> sendToRepeater(true));
+        m.add(orig);
+        m.addSeparator();
+
+        JMenuItem curl = new JMenuItem(hasProbe ? "Copy probe request as curl" : "Copy request as curl");
+        curl.addActionListener(e -> copyCurl(reverifyRequest(f)));
+        m.add(curl);
+        if (hasProbe && hasOrig) {
+            JMenuItem curlO = new JMenuItem("Copy original request as curl");
+            curlO.addActionListener(e -> copyCurl(f.primaryRawRequest()));
+            m.add(curlO);
+        }
+        m.addSeparator();
+        JMenuItem rawReq = new JMenuItem("Copy raw request");
+        rawReq.addActionListener(e -> copyText(com.burpmax.evidence.Snippet.full(reverifyRequest(f)), "request"));
+        m.add(rawReq);
+        byte[] resp = hasProbe ? f.primaryProbeResponse() : f.primaryRawResponse();
+        JMenuItem rawResp = new JMenuItem("Copy raw response");
+        rawResp.setEnabled(resp != null);
+        rawResp.addActionListener(e -> copyText(com.burpmax.evidence.Snippet.full(resp), "response"));
+        m.add(rawResp);
+        m.show(repeaterMoreBtn, 0, repeaterMoreBtn.getHeight());
+    }
+
+    private void copyCurl(byte[] req) {
+        IHttpService svc = selectedFinding != null ? serviceFor(selectedFinding) : null;
+        if (req == null || svc == null) { toast("No request available for curl"); return; }
+        String cmd = com.burpmax.util.CurlBuilder.build(req, svc.getHost(), svc.getPort(),
+                svc.getProtocol().equalsIgnoreCase("https"));
+        copyText(cmd, "curl command");
+    }
+
+    private void copyText(String text, String what) {
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
+        toast("Copied " + what);
+    }
+
+    /** Short-lived message in the summary line; refresh() restores the normal text. */
+    private void toast(String msg) {
+        summaryLbl.setText(msg);
+        javax.swing.Timer t = new javax.swing.Timer(3500, e -> refresh());
+        t.setRepeats(false);
+        t.start();
+    }
+
+    // ── Copy affected hosts ──────────────────────────────────────────────────
+
+    private void showHostsMenu(Component invoker, java.util.Collection<Finding> findings) {
+        JPopupMenu m = new JPopupMenu();
+        int n = findings.size();
+        JMenuItem head = new JMenuItem(n == 1 ? "Affected hosts of this finding"
+                                              : "Affected hosts of " + n + " selected findings");
+        head.setEnabled(false);
+        m.add(head);
+        m.addSeparator();
+        addHostItem(m, "URLs   (https://host:port)", findings, com.burpmax.util.HostFormats.Format.URLS);
+        addHostItem(m, "Hostnames only (deduplicated)", findings, com.burpmax.util.HostFormats.Format.HOSTNAMES);
+        addHostItem(m, "host:port", findings, com.burpmax.util.HostFormats.Format.HOST_PORTS);
+        m.addSeparator();
+        addHostItem(m, "IP addresses (IPv4, IPv6 only if no IPv4)", findings, com.burpmax.util.HostFormats.Format.IPS);
+        m.show(invoker, 0, invoker.getHeight());
+    }
+
+    private void showHostsMenuAt(Component invoker, int x, int y, java.util.Collection<Finding> findings) {
+        JPopupMenu m = new JPopupMenu();
+        addHostItem(m, "Copy hosts as URLs", findings, com.burpmax.util.HostFormats.Format.URLS);
+        addHostItem(m, "Copy hostnames (deduplicated)", findings, com.burpmax.util.HostFormats.Format.HOSTNAMES);
+        addHostItem(m, "Copy host:port", findings, com.burpmax.util.HostFormats.Format.HOST_PORTS);
+        addHostItem(m, "Copy IP addresses (IPv4 first)", findings, com.burpmax.util.HostFormats.Format.IPS);
+        m.show(invoker, x, y);
+    }
+
+    private void addHostItem(JPopupMenu m, String label, java.util.Collection<Finding> findings,
+                             com.burpmax.util.HostFormats.Format fmt) {
+        JMenuItem it = new JMenuItem(label);
+        it.addActionListener(e -> copyHosts(findings, fmt));
+        m.add(it);
+    }
+
+    private void copyHosts(java.util.Collection<Finding> findings, com.burpmax.util.HostFormats.Format fmt) {
+        final List<Finding> snapshot = new ArrayList<>(findings);
+        if (fmt != com.burpmax.util.HostFormats.Format.IPS) {
+            String text = com.burpmax.util.HostFormats.render(snapshot, fmt);
+            int lines = text.isEmpty() ? 0 : text.split("\n").length;
+            if (lines == 0) { toast("No hosts found for the selection"); return; }
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
+            toast("Copied " + lines + (lines == 1 ? " entry" : " entries"));
+            return;
+        }
+        // DNS lookups can block: resolve off the UI thread.
+        toast("Resolving IP addresses\u2026");
+        new SwingWorker<com.burpmax.util.HostFormats.IpResult, Void>() {
+            @Override protected com.burpmax.util.HostFormats.IpResult doInBackground() {
+                return com.burpmax.util.HostFormats.resolve(com.burpmax.util.HostFormats.targets(snapshot));
+            }
+            @Override protected void done() {
+                try {
+                    com.burpmax.util.HostFormats.IpResult r = get();
+                    if (r.ips().isEmpty()) {
+                        toast("No IPs resolved" + (r.unresolved().isEmpty() ? ""
+                                : " (" + String.join(", ", r.unresolved()) + ")"));
+                        return;
+                    }
+                    Toolkit.getDefaultToolkit().getSystemClipboard()
+                            .setContents(new StringSelection(String.join("\n", r.ips())), null);
+                    toast("Copied " + r.ips().size() + " IP" + (r.ips().size() == 1 ? "" : "s")
+                            + (r.unresolved().isEmpty() ? ""
+                               : " \u2014 could not resolve: " + String.join(", ", r.unresolved())));
+                } catch (Exception ex) {
+                    toast("IP lookup failed: " + ex.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    private static JScrollPane areaBody(JTextArea area) {
+        JScrollPane sp = new JScrollPane(area);
+        styleScrollPane(sp);
+        sp.setPreferredSize(new Dimension(300, 110));
+        return sp;
     }
 
     private void toggleFP() {

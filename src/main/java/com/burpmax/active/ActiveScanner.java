@@ -788,7 +788,8 @@ public class ActiveScanner {
                         cr.evidence, cr.remediation, cr.cwe,
                         ctx.url, "(active probe)",
                         "6x identical requests sent",
-                        null, null));
+                        null, null,
+                        cr.probeRequest, cr.probeResponse, -1L));
             }));
 
         // ── Tier 2: Fast — 2–4 requests with confirmation, no sleep ──────────

@@ -9,4 +9,6 @@ public interface IExtensionHelpers {
     String        bytesToString(byte[] bytes);
     byte[]        updateParameter(byte[] request, IParameter parameter);
     IParameter    buildParameter(String name, String value, byte type);
+    IHttpService  buildHttpService(String host, int port, String protocol);
+    IHttpService  buildHttpService(String host, int port, boolean useHttps);
 }
