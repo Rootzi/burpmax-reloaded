@@ -54,7 +54,10 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
-#### Grouped views and filters
+#### Getting the jar without building
+This repo has a GitHub Actions workflow (`.github/workflows/build.yml`). Every push to `main` builds the jar and refreshes the **Latest build** release; download `burpmax-reloaded-latest.jar` from the Releases page (needs repo access), then load it in Burp under Extensions > Add > Java. To build locally instead: Java 17 and `bash build.sh`.
+
+### Grouped views and filters
 The findings list has a **Group by** drop-down: None (table), Host, Finding title, or Category (category, then title, then each affected host). Click a table header to sort. The filter bar also has **Category** and **Finding** drop-downs (with counts) that work together with the severity, source and search filters.
 
 ### Scan specific hosts
