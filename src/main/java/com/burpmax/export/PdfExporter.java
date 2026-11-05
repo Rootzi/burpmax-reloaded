@@ -331,7 +331,7 @@ public class PdfExporter {
         // Generated line below the notice box
         String genLine = "Generated: " + LocalDateTime.now().format(
             DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")) +
-            "   |   BurpMax v1.0";
+            "   |   BurpMax Reloaded v" + com.burpmax.util.Version.get();
         g.setFont(F_SMALL); g.setColor(C_MUTED);
         drawStringCentered(genLine, PW / 2, noticeY + 72);
 

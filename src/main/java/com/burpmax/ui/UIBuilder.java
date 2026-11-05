@@ -771,7 +771,7 @@ public class UIBuilder {
         bar.setBackground(C_HEADER_BG);
         bar.setBorder(BorderFactory.createMatteBorder(1,0,0,0,C_BORDER));
 
-        JLabel status = muted("BurpMax v1.0 | Passive + Active scanning");
+        JLabel status = muted("BurpMax Reloaded v" + com.burpmax.util.Version.get() + " | Passive + Active scanning");
         status.setBorder(BorderFactory.createEmptyBorder(4, 16, 4, 12));
         bar.add(status, BorderLayout.WEST);
 

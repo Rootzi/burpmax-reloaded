@@ -160,7 +160,7 @@ public class DocxExporter {
         b.append(confidentialNoticeBox());
         b.append(para("", false, 10, "FFFFFF"));
         b.append(paraCentered("Generated: " + LocalDateTime.now().format(FMT) +
-                "   |   BurpMax v1.0", false, 16, "AAAAAA"));
+                "   |   BurpMax Reloaded v" + com.burpmax.util.Version.get(), false, 16, "AAAAAA"));
     }
 
     private static String coverSummaryTable(Map<String, Integer> counts) {

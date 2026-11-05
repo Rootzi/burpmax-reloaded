@@ -1,3 +1,5 @@
 build/classes/
 build/stub-classes/
 build/*.jar
+build/MANIFEST.gen
+build/VERSION.txt

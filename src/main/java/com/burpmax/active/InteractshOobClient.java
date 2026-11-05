@@ -278,7 +278,7 @@ public class InteractshOobClient implements OobClient {
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
-            conn.setRequestProperty("User-Agent", "BurpMax/1.0");
+            conn.setRequestProperty("User-Agent", "BurpMax/" + com.burpmax.util.Version.get());
             conn.setConnectTimeout(8_000);
             conn.setReadTimeout(8_000);
             byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
@@ -294,7 +294,7 @@ public class InteractshOobClient implements OobClient {
         HttpURLConnection conn = openConnection(url);
         try {
             conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "BurpMax/1.0");
+            conn.setRequestProperty("User-Agent", "BurpMax/" + com.burpmax.util.Version.get());
             conn.setConnectTimeout(timeoutMs);
             conn.setReadTimeout(timeoutMs);
             int status = conn.getResponseCode();

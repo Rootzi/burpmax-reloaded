@@ -1,5 +1,5 @@
 #!/bin/bash
-# BurpMax v1.0.0 Build Script
+# BurpMax Reloaded build script
 # Requirements: JDK 17+
 # Usage: ./build.sh
 
@@ -9,9 +9,12 @@ STUB_DIR="burp-stub"
 SRC_DIR="src/main/java"
 STUB_OUT="build/stub-classes"
 OUT_DIR="build/classes"
-JAR_NAME="burpmax-1.0.0.jar"
+# Version = VERSION file (major.minor) + build number. CI sets BUILD_NUMBER; local builds get ".dev".
+BASE_VERSION="$(tr -d ' \r\n' < VERSION)"
+VERSION="${BASE_VERSION}.${BUILD_NUMBER:-dev}"
+JAR_NAME="burpmax-reloaded-${VERSION}.jar"
 
-echo "BurpMax v1.0.0 Build"
+echo "BurpMax Reloaded ${VERSION} Build"
 echo "========================"
 
 rm -rf "$OUT_DIR" "$STUB_OUT"
@@ -31,13 +34,19 @@ javac --release 17 -encoding UTF-8 \
   -sourcepath "$SRC_DIR" \
   @/tmp/burpmax_sources.txt
 
+# Stamp the version into the jar (read by the UI/exports) and the manifest
+echo "$VERSION" > "$OUT_DIR/burpmax-version.txt"
+sed "s/^Extension-Version:.*/Extension-Version: ${VERSION}/" build/MANIFEST.MF > build/MANIFEST.gen
+echo "$VERSION" > build/VERSION.txt
+rm -f build/*.jar
+
 # Step 3: Package JAR
 # - burp/ stub classes are excluded (Burp provides real API at runtime)
 # - org/json classes are INCLUDED (our bundled JSON implementation, not provided by Burp)
 echo "[3/4] Packaging $JAR_NAME..."
 
 # Start with our compiled sources
-jar cfm "build/$JAR_NAME" build/MANIFEST.MF -C "$OUT_DIR" .
+jar cfm "build/$JAR_NAME" build/MANIFEST.gen -C "$OUT_DIR" .
 
 # Bundle org/json from stub-classes (runtime dependency not provided by Burp)
 jar uf "build/$JAR_NAME" -C "$STUB_OUT" org

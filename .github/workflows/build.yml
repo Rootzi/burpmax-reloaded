@@ -20,23 +20,23 @@ jobs:
           java-version: "17"
 
       - name: Build
-        run: bash build.sh
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          bash build.sh
+          echo "VERSION=$(cat build/VERSION.txt)" >> "$GITHUB_ENV"
 
       - name: Keep the jar as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: burpmax-jar
-          path: build/burpmax-1.0.0.jar
+          name: burpmax-reloaded-${{ env.VERSION }}
+          path: build/burpmax-reloaded-*.jar
 
-      - name: Publish rolling "latest" release
+      - name: Publish a release for this version
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          SHORT=$(git rev-parse --short HEAD)
-          cp build/burpmax-1.0.0.jar "burpmax-reloaded-${SHORT}.jar"
-          cp build/burpmax-1.0.0.jar burpmax-reloaded-latest.jar
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest burpmax-reloaded-latest.jar "burpmax-reloaded-${SHORT}.jar" \
-            --title "Latest build (${SHORT})" \
+          gh release create "v${VERSION}" "build/burpmax-reloaded-${VERSION}.jar" \
+            --title "BurpMax Reloaded ${VERSION}" \
             --notes "Built from commit ${GITHUB_SHA}. Load in Burp: Extensions > Add > Java > select the jar." \
-            --target "${GITHUB_SHA}"
+            --target "${GITHUB_SHA}" --latest

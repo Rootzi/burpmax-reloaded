@@ -55,7 +55,7 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
 #### Getting the jar without building
-This repo has a GitHub Actions workflow (`.github/workflows/build.yml`). Every push to `main` builds the jar and refreshes the **Latest build** release; download `burpmax-reloaded-latest.jar` from the Releases page (needs repo access), then load it in Burp under Extensions > Add > Java. To build locally instead: Java 17 and `bash build.sh`.
+This repo has a GitHub Actions workflow (`.github/workflows/build.yml`). Every push to `main` builds the jar and publishes a release named after its version (for example `v1.1.7`), with a single file `burpmax-reloaded-1.1.7.jar`. Download it from the latest release (needs repo access), then load it in Burp under Extensions > Add > Java. The version shows at the bottom left of the extension and in report footers. The major.minor part lives in the `VERSION` file (bump it for bigger changes); the last number is the CI build number. Local builds (Java 17, `bash build.sh`) are versioned `1.1.dev`.
 
 ### Grouped views and filters
 The findings list has a **Group by** drop-down: None (table), Host, Finding title, or Category (category, then title, then each affected host). Click a table header to sort. The filter bar also has **Category** and **Finding** drop-downs (with counts) that work together with the severity, source and search filters.
