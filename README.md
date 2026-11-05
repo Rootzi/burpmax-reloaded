@@ -54,7 +54,10 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
-#### Backfill evidence
+#### Scan specific hosts
+The scan dialog has a **Target hosts** section listing every in-scope host from the site map (with URL counts). Untick hosts to leave them out, or type hosts / `host:port` / `*.example.com` to add. Leave everything ticked to scan the whole scope. The limit applies to BurpMax's modules and to Nuclei.
+
+### Backfill evidence
 The **Backfill evidence** button (top toolbar) re-checks only findings that have no captured request/response, for example ones restored from an older session. Each is re-fetched once with a plain GET (in-scope URLs only) and checked again; injection-type findings can also be re-probed with the low-risk modules of that family (time-based and replay modules never run). Evidence is attached only when the issue reproduces, and no new findings are added. Your ticked skips and the safety rules still apply. A results table lists every finding with its outcome (evidence captured, could not reproduce, request failed, not run, skipped) and can be copied or exported as CSV. Nuclei findings are skipped (re-run Nuclei instead).
 
 ## Nuclei integration (optional)

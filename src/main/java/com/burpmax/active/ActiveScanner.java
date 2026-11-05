@@ -179,6 +179,27 @@ public class ActiveScanner {
 
     public Set<String> getSkipProbes() { return userSkipProbes; }
 
+    /** Restrict a full scan to these hosts (host, host:port or *.suffix). null/empty = whole scope. */
+    private volatile Set<String> targetHosts = null;
+    public void setTargetHosts(Set<String> hosts) {
+        this.targetHosts = (hosts == null || hosts.isEmpty()) ? null : Set.copyOf(hosts);
+    }
+    public Set<String> getTargetHosts() { return targetHosts; }
+
+    private boolean hostAllowed(URL u) {
+        Set<String> th = targetHosts;
+        if (th == null) return true;
+        if (u == null || u.getHost() == null) return false;
+        String h = u.getHost().toLowerCase();
+        int port = u.getPort() > 0 ? u.getPort() : u.getDefaultPort();
+        for (String t : th) {
+            if (t.startsWith("*.")) { if (h.endsWith(t.substring(1)) || h.equals(t.substring(2))) return true; }
+            else if (t.contains(":") && !t.startsWith("[")) { if (t.equals(h + ":" + port)) return true; }
+            else if (t.equals(h)) return true;
+        }
+        return false;
+    }
+
     /** Write budgets per endpoint per scan: messaging forms, auth endpoints, everything else. */
     public void setWriteBudgets(int messaging, int auth, int other) {
         riskGuard.setBudgets(messaging, auth, other);
@@ -1190,6 +1211,8 @@ public class ActiveScanner {
 
                     // Only in-scope
                     if (!callbacks.isInScope(url)) continue;
+                    // Only the hosts chosen in the scan dialog (if any)
+                    if (!hostAllowed(url)) continue;
 
                     // Dedup by URL + method
                     String key = reqInfo.getMethod() + ":" + url.toString();

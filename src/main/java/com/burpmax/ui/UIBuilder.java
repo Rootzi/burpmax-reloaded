@@ -1968,6 +1968,8 @@ public class UIBuilder {
         // Scan policy: probes the user has explicitly disabled.
         // AtomicReference used as a mutable final container so the lambda closures
         // below can both read and replace the set without a raw-type array.
+        final java.util.concurrent.atomic.AtomicReference<java.util.Set<String>> resultHosts =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
         final java.util.concurrent.atomic.AtomicReference<java.util.Set<String>> resultSkipProbes =
             new java.util.concurrent.atomic.AtomicReference<>(
                 activeScanner != null ? new java.util.HashSet<>(activeScanner.getSkipProbes())
@@ -2397,11 +2399,15 @@ public class UIBuilder {
                 null,
                 relayout,
                 nucleiPanel);
+        final HostScopePanel hostPanel = new HostScopePanel(callbacks, relayout);
+        CollapsibleSection hostSection = new CollapsibleSection("Target hosts  \u2014  limit this scan to specific hosts", hostPanel, false);
         CollapsibleSection nucleiSection = new CollapsibleSection("Nuclei templates  \u2014  goal groups", nucleiPanel, false);
         CollapsibleSection policySection = new CollapsibleSection("Scan policy  \u2014  modules, profiles, limits", policyPanel, true);
 
         body.add(Box.createVerticalStrut(12));
         body.add(sep3);
+        body.add(Box.createVerticalStrut(8));
+        body.add(hostSection);
         body.add(Box.createVerticalStrut(8));
         body.add(policySection);
         body.add(Box.createVerticalStrut(8));
@@ -2434,6 +2440,12 @@ public class UIBuilder {
         startBtn.setOpaque(true);
         startBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         startBtn.addActionListener(ev -> {
+            if (hostPanel.nothingChosen()) {
+                JOptionPane.showMessageDialog(dlg, "No hosts are selected. Tick at least one host (or type one) under \"Target hosts\".",
+                        "Target hosts", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            resultHosts.set(hostPanel.selectedHosts());
             confirmed[0] = true;
             resultDelay[0]   = delaySlider.getValue();
             resultOob[0]     = oobToggle.isSelected();
@@ -2614,6 +2626,7 @@ public class UIBuilder {
             // Nuclei-only scan: skip every BurpMax module.
             activeScanner.setSkipProbes(new java.util.HashSet<>(com.burpmax.active.ProbeCatalog.allSkipKeys()));
         }
+        activeScanner.setTargetHosts(resultHosts.get());
         activeScanner.setNucleiConfig(resultNuclei[0]);
         if (resultBudgets[0] != null) {
             activeScanner.setWriteBudgets(resultBudgets[0][0], resultBudgets[0][1], resultBudgets[0][2]);
