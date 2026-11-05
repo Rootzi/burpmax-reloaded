@@ -276,8 +276,11 @@ public class Finding {
             ej.put("endpoint",    e.endpoint);
             ej.put("status_code", e.statusCode);
             // Serialize probe PoC data as Base64 so highlights survive session save/load
-            if (e.probeRequest  != null) ej.put("probe_req",  java.util.Base64.getEncoder().encodeToString(e.probeRequest));
-            if (e.probeResponse != null) ej.put("probe_resp", java.util.Base64.getEncoder().encodeToString(e.probeResponse));
+            {
+                java.util.List<String> ph = e.evidence != null ? e.evidence.responseMatches() : java.util.List.of();
+                if (e.probeRequest  != null) ej.put("probe_req",  java.util.Base64.getEncoder().encodeToString(compact(e.probeRequest, java.util.List.of(), RAW_REQ_CAP)));
+                if (e.probeResponse != null) ej.put("probe_resp", java.util.Base64.getEncoder().encodeToString(compact(e.probeResponse, ph, RAW_RESP_CAP)));
+            }
             if (e.payload   != null)     ej.put("payload",    e.payload);
             if (e.parameter != null)     ej.put("parameter",  e.parameter);
             if (e.timingMs  > 0)         ej.put("timing_ms",  e.timingMs);
@@ -350,6 +353,15 @@ public class Finding {
                     if (ej.has("raw_req"))  rawReq  = java.util.Base64.getDecoder().decode(ej.optString("raw_req",  ""));
                     if (ej.has("raw_resp")) rawResp = java.util.Base64.getDecoder().decode(ej.optString("raw_resp", ""));
                 } catch (Exception ignored) {}
+                {   // shrink oversized traffic from older/larger session files so memory and the next save stay small
+                    java.util.List<String> lh = new java.util.ArrayList<>();
+                    JSONArray la = ej.optJSONArray("ev_resp");
+                    if (la != null) for (int k = 0; k < la.length(); k++) lh.add(String.valueOf(la.get(k)));
+                    if (rawReq    != null) rawReq    = compact(rawReq,    java.util.List.of(), RAW_REQ_CAP);
+                    if (rawResp   != null) rawResp   = compact(rawResp,   lh, RAW_RESP_CAP);
+                    if (probeReq  != null) probeReq  = compact(probeReq,  java.util.List.of(), RAW_REQ_CAP);
+                    if (probeResp != null) probeResp = compact(probeResp, lh, RAW_RESP_CAP);
+                }
                 String pl    = ej.has("payload")   ? ej.optString("payload",   null) : null;
                 String param = ej.has("parameter") ? ej.optString("parameter", null) : null;
                 long   tms   = ej.has("timing_ms") ? ej.optLong("timing_ms", -1L) : -1L;
@@ -370,9 +382,9 @@ public class Finding {
     }
 
     // ── Saved-session traffic ─────────────────────────────────────────────────
-    private static final int RAW_ENDPOINTS = 5;
-    private static final int RAW_REQ_CAP   = 16 * 1024;
-    private static final int RAW_RESP_CAP  = 64 * 1024;
+    private static final int RAW_ENDPOINTS = 1;
+    private static final int RAW_REQ_CAP   = 4 * 1024;
+    private static final int RAW_RESP_CAP  = 24 * 1024;
 
     /**
      * Shrink a message for saving. Small messages are kept whole. A big one keeps its start

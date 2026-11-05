@@ -178,7 +178,7 @@ public class FindingStore {
         JSONArray arr = new JSONArray();
         for (Finding f : snapshot) arr.put(f.toJson());  // toJson reads only final/volatile fields
         root.put("findings", arr);
-        return root.toString(2);
+        return root.toString();
     }
 
     /** @return [restored, skipped] */

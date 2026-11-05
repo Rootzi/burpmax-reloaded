@@ -68,7 +68,7 @@ public class SessionManager {
 
     public String getSavePath() { return savePath; }
 
-    private static final long MAX_SESSION_BYTES = 50 * 1024 * 1024L;  // 50 MB hard limit
+    private static final long MAX_SESSION_BYTES = 400 * 1024 * 1024L;  // 400 MB hard limit (new saves are far smaller)
 
     public void setSavePath(String path) {
         try {
@@ -169,7 +169,7 @@ public class SessionManager {
                 if (f.length() > MAX_SESSION_BYTES) {
                     javax.swing.SwingUtilities.invokeLater(
                             () -> onError.accept("Session file too large ("
-                                    + (f.length() / 1024 / 1024) + " MB). Maximum is 50 MB."));
+                                    + (f.length() / 1024 / 1024) + " MB). Maximum is 400 MB."));
                     return;
                 }
                 String json;

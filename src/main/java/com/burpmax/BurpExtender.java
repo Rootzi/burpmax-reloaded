@@ -32,7 +32,7 @@ public class BurpExtender implements IBurpExtender, IHttpListener, ITab, IExtens
                                       IContextMenuFactory {
 
     public static final String EXT_NAME = "BurpMax";
-    public static final String VERSION  = "1.0.0";
+    public static final String VERSION  = com.burpmax.util.Version.get();
 
     // Package-private — IBurpExtenderCallbacks grants full Burp internals access.
     // Making it public would allow any other Burp extension in the same JVM to
