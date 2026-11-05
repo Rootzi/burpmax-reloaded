@@ -129,6 +129,7 @@ public class UIBuilder {
                                     IBurpExtenderCallbacks callbacks, Runnable pauseToggle) {
         UIBuilder ui = new UIBuilder(store, session, callbacks, pauseToggle);
         ui.buildUI();
+        Widgets.contrastTree(ui.panel);
         store.addListener(() -> SwingUtilities.invokeLater(ui::refresh));
         // Autosave on every finding store mutation (passive scan, active scan, analyst edits).
         // scheduleAutoSave() is debounced (2 s) so rapid passive scan bursts produce one save.
@@ -1134,7 +1135,7 @@ public class UIBuilder {
         ta.setLineWrap(true);
         ta.setCaretPosition(0);
         Object[] opts = {"Close", "Copy result", "Open full response", "Send to Repeater"};
-        int c = JOptionPane.showOptionDialog(panel, new JScrollPane(ta), "Re-verify \u2014 " + f.name,
+        int c = JOptionPane.showOptionDialog(panel, Widgets.contrast(new JScrollPane(ta)), "Re-verify \u2014 " + f.name,
                 JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null, opts, opts[0]);
         if (c == 1) copyText(msg.toString(), "re-verify result");
         else if (c == 2 && r.response() != null) FullMessageDialog.show(panel, f.name + " (re-verify)", r.request(), r.response(), true);
@@ -1660,6 +1661,7 @@ public class UIBuilder {
         root.add(form, BorderLayout.CENTER);
         root.add(footer, BorderLayout.SOUTH);
         dlg.setContentPane(root);
+        Widgets.contrastTree(root);
         dlg.pack();
         dlg.setMinimumSize(new Dimension(520, dlg.getHeight()));
         dlg.setLocationRelativeTo(panel);
@@ -2568,6 +2570,7 @@ public class UIBuilder {
         root.add(bodyScroll, java.awt.BorderLayout.CENTER);
         root.add(footer, java.awt.BorderLayout.SOUTH);
         dlg.setContentPane(root);
+        Widgets.contrastTree(root);
         dlg.pack();
         // Fit the screen, never taller than it; remember the last size the user chose.
         java.awt.Rectangle scr = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();

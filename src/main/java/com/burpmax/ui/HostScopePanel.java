@@ -57,7 +57,7 @@ final class HostScopePanel extends JPanel {
             boxes.put(e.getKey(), b);
             list.add(b);
         }
-        JScrollPane sp = new JScrollPane(list);
+        JScrollPane sp = Widgets.contrast(new JScrollPane(list));
         sp.setAlignmentX(LEFT_ALIGNMENT);
         sp.setPreferredSize(new Dimension(420, Math.min(170, 26 + 22 * Math.max(1, counts.size()))));
         sp.setMaximumSize(new Dimension(Integer.MAX_VALUE, 170));

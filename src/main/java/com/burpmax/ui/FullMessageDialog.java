@@ -71,7 +71,7 @@ final class FullMessageDialog {
     }
 
     private static JScrollPane wrap(JTextArea a) {
-        JScrollPane sp = new JScrollPane(a);
+        JScrollPane sp = Widgets.contrast(new JScrollPane(a));
         Widgets.styleScroll(sp);
         return sp;
     }

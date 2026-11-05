@@ -130,4 +130,38 @@ final class Widgets {
             for (Component ch : ct.getComponents()) hook(ch, fwd, adder, outer);
         }
     }
+
+    /** Gives one scroll pane the high-contrast scroll bars. */
+    static <T extends JScrollPane> T contrast(T sp) {
+        for (JScrollBar b : new JScrollBar[]{sp.getVerticalScrollBar(), sp.getHorizontalScrollBar()}) {
+            if (b == null) continue;
+            if (!(b.getUI() instanceof ContrastScrollBarUI)) b.setUI(new ContrastScrollBarUI());
+            b.setUnitIncrement(Math.max(b.getUnitIncrement(), 16));
+            b.setOpaque(true);
+        }
+        sp.setCorner(JScrollPane.LOWER_RIGHT_CORNER, cornerFiller());
+        return sp;
+    }
+
+    private static JComponent cornerFiller() {
+        JPanel p = new JPanel(); p.setBackground(new Color(0x16, 0x1F, 0x33)); return p;
+    }
+
+    /** Applies {@link #contrast} to every scroll pane under root, including ones added later. */
+    static void contrastTree(Container root) {
+        java.awt.event.ContainerListener l = new java.awt.event.ContainerAdapter() {
+            @Override public void componentAdded(java.awt.event.ContainerEvent e) { visit(e.getChild(), this); }
+        };
+        visit(root, l);
+    }
+
+    private static void visit(Component c, java.awt.event.ContainerListener l) {
+        if (c instanceof JScrollPane sp) contrast(sp);
+        if (c instanceof Container ct) {
+            boolean has = false;
+            for (java.awt.event.ContainerListener x : ct.getContainerListeners()) if (x == l) has = true;
+            if (!has) ct.addContainerListener(l);
+            for (Component ch : ct.getComponents()) visit(ch, l);
+        }
+    }
 }

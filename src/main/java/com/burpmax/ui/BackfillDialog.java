@@ -173,7 +173,7 @@ final class BackfillDialog {
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         bottom.add(copy); bottom.add(csv); bottom.add(close);
         d.getContentPane().add(top, BorderLayout.NORTH);
-        d.getContentPane().add(new JScrollPane(tbl), BorderLayout.CENTER);
+        d.getContentPane().add(Widgets.contrast(new JScrollPane(tbl)), BorderLayout.CENTER);
         d.getContentPane().add(bottom, BorderLayout.SOUTH);
         d.setSize(1000, 460);
         d.setLocationRelativeTo(parent);
