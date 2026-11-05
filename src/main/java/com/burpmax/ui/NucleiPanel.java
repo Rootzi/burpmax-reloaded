@@ -52,10 +52,9 @@ final class NucleiPanel extends JPanel {
         add(runNative);
         add(Box.createVerticalStrut(6));
 
-        JLabel hint = small("<html><div style='width:430px'>Pick goals. Each goal is a set of Nuclei template tags. "
+        add(Widgets.wrapped("Pick goals. Each goal is a set of Nuclei template tags. "
                 + "Only read-only HTTP templates are ever run: nothing that sends POST/PUT/DELETE, brute-forces logins, "
-                + "uses destructive payloads, or is tagged intrusive/dos/fuzzing.</div></html>");
-        add(hint);
+                + "uses destructive payloads, or is tagged intrusive/dos/fuzzing.", C_TEXT_MUTED));
         add(Box.createVerticalStrut(4));
 
         groupsPanel.setLayout(new BoxLayout(groupsPanel, BoxLayout.Y_AXIS));

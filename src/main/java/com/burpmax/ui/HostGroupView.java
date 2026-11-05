@@ -95,6 +95,8 @@ final class HostGroupView extends JPanel {
         add(sp, BorderLayout.CENTER);
     }
 
+    void expandAllForTest() { for (int i = 0; i < tree.getRowCount(); i++) tree.expandRow(i); }
+
     void setFindings(List<Finding> findings) {
         this.source = findings == null ? List.of() : findings;
         rebuild();
@@ -201,37 +203,66 @@ final class HostGroupView extends JPanel {
         };
     }
 
-    private static final class Renderer extends DefaultTreeCellRenderer {
+    /**
+     * Draws coloured text segments itself: no HTML (Burp's look and feel can show HTML as raw text)
+     * and no nested components.
+     */
+    private static final class SegRow extends JComponent {
         @java.io.Serial private static final long serialVersionUID = 1L;
+        private final transient List<Object[]> segs = new ArrayList<>();   // {String text, Font font, Color color}
+        private boolean selected;
+
+        SegRow add(String text, Font f, Color c) { segs.add(new Object[]{text, f, c}); return this; }
+        SegRow selected(boolean s) { selected = s; return this; }
+
+        @Override public Dimension getPreferredSize() {
+            int w = 6, h = 20;
+            for (Object[] s : segs) {
+                FontMetrics fm = getFontMetrics((Font) s[1]);
+                w += fm.stringWidth((String) s[0]) + 8;
+                h = Math.max(h, fm.getHeight() + 6);
+            }
+            return new Dimension(w, h);
+        }
+
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setColor(selected ? C_SEL_ROW : C_ROOT);
+            g.fillRect(0, 0, getWidth(), getHeight());
+            int x = 3;
+            for (Object[] s : segs) {
+                Font f = (Font) s[1];
+                g.setFont(f);
+                g.setColor((Color) s[2]);
+                FontMetrics fm = g.getFontMetrics();
+                g.drawString((String) s[0], x, (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
+                x += fm.stringWidth((String) s[0]) + 8;
+            }
+            g.dispose();
+        }
+    }
+
+    private static final class Renderer implements javax.swing.tree.TreeCellRenderer {
+        private static final String[] AB = {"C", "H", "M", "L", "I"};
 
         @Override public Component getTreeCellRendererComponent(JTree t, Object value, boolean sel,
                 boolean exp, boolean leaf, int row, boolean focus) {
-            super.getTreeCellRendererComponent(t, value, sel, exp, leaf, row, focus);
-            setIcon(null);
-            setOpaque(true);
-            setBackground(sel ? C_SEL_ROW : C_ROOT);
+            SegRow r = new SegRow().selected(sel);
             Object o = ((DefaultMutableTreeNode) value).getUserObject();
             if (o instanceof HostNode h) {
-                StringBuilder sb = new StringBuilder("<html><b>").append(esc(h.label())).append("</b>");
-                if (h.ip()) sb.append(" <font color='#78919F'>IP</font>");
-                String[] ab = {"C", "H", "M", "L", "I"};
+                r.add(h.label(), new Font("Arial", Font.BOLD, 12), C_TEXT_HEAD);
+                if (h.ip()) r.add("IP", Widgets.UI_TINY, C_TEXT_MUTED);
                 for (int i = 0; i < h.counts().length; i++) {
-                    if (h.counts()[i] == 0) continue;
-                    sb.append("  <font color='#").append(hex(sevColor(SEV_ORDER.get(i)))).append("'>")
-                      .append(ab[i]).append(" ").append(h.counts()[i]).append("</font>");
+                    if (h.counts()[i] > 0) r.add(AB[i] + " " + h.counts()[i], Widgets.UI_TINY, sevColor(SEV_ORDER.get(i)));
                 }
-                sb.append("</html>");
-                setText(sb.toString());
-                setForeground(C_TEXT_HEAD);
             } else if (o instanceof Finding f) {
-                String sev = f.effectiveSeverity();
-                setText("<html><font color='#" + hex(sevColor(sev)) + "'>●</font> " + esc(f.name)
-                        + (f.suppressed ? " <font color='#78919F'>(FP)</font>" : "") + "</html>");
-                setForeground(C_TEXT);
+                r.add("\u25CF", FONT_UI, sevColor(f.effectiveSeverity()));
+                r.add((f.name == null ? "" : f.name) + (f.suppressed ? "  (FP)" : ""), FONT_UI, f.suppressed ? C_TEXT_MUTED : C_TEXT);
+            } else {
+                r.add(String.valueOf(o), FONT_UI, C_TEXT);
             }
-            return this;
+            return r;
         }
-        private static String hex(Color c) { return String.format("%06X", c.getRGB() & 0xFFFFFF); }
-        private static String esc(String s) { return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;"); }
     }
 }

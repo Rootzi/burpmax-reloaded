@@ -60,6 +60,21 @@ final class Widgets {
         t.start();
     }
 
+    /** Wrapped, read-only, transparent plain text (use instead of an HTML label). */
+    static JTextArea wrapped(String text, Color fg) {
+        JTextArea t = new JTextArea(text);
+        t.setEditable(false);
+        t.setFocusable(false);
+        t.setOpaque(false);
+        t.setLineWrap(true);
+        t.setWrapStyleWord(true);
+        t.setFont(UI_SMALL);
+        t.setForeground(fg);
+        t.setBorder(null);
+        t.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return t;
+    }
+
     /** A panel that follows the width of the scroll pane it sits in, so content wraps instead of clipping. */
     static final class TrackingPanel extends JPanel implements Scrollable {
         @java.io.Serial private static final long serialVersionUID = 1L;

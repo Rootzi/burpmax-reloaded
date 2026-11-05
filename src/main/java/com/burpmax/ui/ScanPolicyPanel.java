@@ -45,7 +45,7 @@ final class ScanPolicyPanel extends JPanel {
     private final Map<String, CollapsibleSection> sections = new LinkedHashMap<>();
     private final JComboBox<String> profileBox = new JComboBox<>();
     private final JLabel profileNote = new JLabel(" ");
-    private final JLabel plan = new JLabel();
+    private final JTextArea plan = Widgets.wrapped(" ", C_TEXT_DIM);
     private final JSpinner budMsg  = spinner(3, 0, 50);
     private final JSpinner budAuth = spinner(15, 0, 500);
     private final JSpinner budOther = spinner(60, 0, 5000);
@@ -73,14 +73,8 @@ final class ScanPolicyPanel extends JPanel {
         add(profileNote);
         add(Box.createVerticalStrut(8));
 
-        JLabel hint = new JLabel("<html><div style='width:430px'>Tick a module to <b>skip</b> it. Badges: "
-                + "<font color='#34D399'>LOW</font> read-only &nbsp; "
-                + "<font color='#FBBF24'>MOD</font> many requests / replays your request &nbsp; "
-                + "<font color='#F87171'>HIGH</font> writes data or bursts traffic.</div></html>");
-        hint.setFont(Widgets.UI_SMALL);
-        hint.setForeground(C_TEXT_MUTED);
-        hint.setAlignmentX(LEFT_ALIGNMENT);
-        add(hint);
+        add(Widgets.wrapped("Tick a module to SKIP it. Badges: LOW = read-only, MOD = many requests or replays your request, "
+                + "HIGH = writes data or bursts traffic.", C_TEXT_MUTED));
         add(Box.createVerticalStrut(6));
 
         for (String cat : ProbeCatalog.categories()) add(categorySection(cat));
@@ -88,9 +82,6 @@ final class ScanPolicyPanel extends JPanel {
         add(Box.createVerticalStrut(8));
         add(safetyBlock());
         add(Box.createVerticalStrut(8));
-        plan.setFont(Widgets.UI_SMALL);
-        plan.setForeground(C_TEXT_DIM);
-        plan.setAlignmentX(LEFT_ALIGNMENT);
         add(plan);
 
         // initial state: the saved skips from the last scan, else the recommended profile
@@ -342,12 +333,10 @@ final class ScanPolicyPanel extends JPanel {
     }
 
     private JCheckBox box(String label, Risk risk, String effect, boolean head) {
-        Color c = risk == Risk.HIGH ? RISK_HIGH : risk == Risk.MODERATE ? RISK_MOD : RISK_LOW;
-        String badge = head ? "" : "  <font color='#" + String.format("%06X", c.getRGB() & 0xFFFFFF) + "'>["
-                + (risk == Risk.HIGH ? "HIGH" : risk == Risk.MODERATE ? "MOD" : "LOW") + "]</font>";
-        JCheckBox cb = new JCheckBox("<html>" + (head ? "<b>" + label + "</b>" : label) + badge + "</html>");
-        cb.setFont(Theme.FONT_UI);
-        cb.setForeground(C_TEXT_HEAD);
+        JCheckBox cb = new JCheckBox(label + (head ? "" : "  [" + (risk == Risk.HIGH ? "HIGH" : risk == Risk.MODERATE ? "MOD" : "LOW") + "]"));
+        cb.setFont(head ? Theme.FONT_UI_B : Theme.FONT_UI);
+        // The risk shows in the label text; colour the whole label so it is scannable.
+        cb.setForeground(head ? C_TEXT_HEAD : risk == Risk.HIGH ? RISK_HIGH : risk == Risk.MODERATE ? RISK_MOD : C_TEXT_HEAD);
         cb.setBackground(C_SURFACE);
         cb.setAlignmentX(LEFT_ALIGNMENT);
         cb.setToolTipText("<html><div style='width:320px'>" + escape(effect) + "</div></html>");
@@ -456,12 +445,11 @@ final class ScanPolicyPanel extends JPanel {
         }
         int eps = 0;
         try { eps = endpointCount == null ? 0 : endpointCount.getAsInt(); } catch (Exception ignored) { }
-        plan.setText("<html><b>Scan plan:</b> " + run + " of " + total + " modules × "
+        plan.setText("Scan plan: " + run + " of " + total + " modules x "
                 + (eps > 0 ? eps + " endpoints" : "all in-scope endpoints")
-                + (eps > 0 ? " (≤ " + (run * eps) + " module runs, each sending several requests)" : "")
-                + "<br>Includes " + high + " high-risk and " + mod + " moderate-risk modules."
-                + (replayRo.isSelected() ? " Replay checks stay read-only." : " Replay checks may re-send writes.")
-                + "</html>");
+                + (eps > 0 ? " (up to " + (run * eps) + " module runs, each sending several requests)" : "")
+                + "\nIncludes " + high + " high-risk and " + mod + " moderate-risk modules."
+                + (replayRo.isSelected() ? " Replay checks stay read-only." : " Replay checks may re-send writes."));
         relayout.run();
     }
 }
