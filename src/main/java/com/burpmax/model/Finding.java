@@ -188,6 +188,11 @@ public class Finding {
         if (affectedEndpoints.isEmpty()) return com.burpmax.evidence.Evidence.EMPTY;
         EndpointEntry e = affectedEndpoints.get(0);
         com.burpmax.evidence.Evidence ev = e.evidence;
+        // Older builds highlighted just the HTTP status line for passive findings; recompute those.
+        if (ev != null && e.probeRequest == null && e.probeResponse == null && ev.responseMatches().size() == 1
+                && ev.responseMatches().get(0).startsWith("HTTP/") && e.rawResponse != null) {
+            ev = null;
+        }
         if (ev == null) {
             if (e.probeRequest != null || e.probeResponse != null) {
                 ev = com.burpmax.evidence.EvidenceExtractor.compute(

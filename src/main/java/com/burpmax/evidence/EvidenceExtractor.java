@@ -223,14 +223,44 @@ public final class EvidenceExtractor {
         String why = evidenceText == null || evidenceText.isBlank()
                 ? "Observed in captured traffic; no probe was sent."
                 : "Observed in captured traffic (no probe was sent): " + evidenceText;
-        if (hits.isEmpty()) {
-            String sl = startLine(resp);
-            if (!sl.isEmpty() && (name == null || !name.toLowerCase().contains("missing"))) hits.add(sl);
+        if (hits.isEmpty() && evidenceText != null && !resp.isEmpty()) {
+            // Prose evidence such as "Magento 2.3 detected in response.": find the product and
+            // version where they really appear instead of highlighting the status line.
+            String found = findProductVersion(resp, evidenceText);
+            if (found != null) hits.add(found);
         }
         return new Evidence(new ArrayList<>(hits), List.of(), why);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static final Set<String> STOP = Set.of("detected", "response", "version", "versions", "header", "found",
+            "disclosed", "this", "that", "with", "from", "body", "the", "and", "for", "present", "missing");
+
+    /** Locates "<Product> ... <version>" (or just the product / version) in the response text. */
+    private static String findProductVersion(String resp, String evidenceText) {
+        Matcher vm = Pattern.compile("\\d+(?:\\.\\d+)+").matcher(evidenceText);
+        String ver = vm.find() ? vm.group() : null;
+        String word = null;
+        Matcher wm = Pattern.compile("[A-Za-z][A-Za-z0-9._+-]{3,}").matcher(evidenceText);
+        while (wm.find()) {
+            String w = wm.group();
+            if (!STOP.contains(w.toLowerCase())) { word = w; break; }
+        }
+        if (word != null && ver != null) {
+            Matcher m = Pattern.compile("(?i)" + Pattern.quote(word) + "[^\\n<>\"']{0,40}?" + Pattern.quote(ver) + "[\\w.-]{0,8}").matcher(resp);
+            if (m.find()) return trimHit(m.group());
+        }
+        if (ver != null) {
+            Matcher m = Pattern.compile("[\\w/.-]{0,20}" + Pattern.quote(ver) + "[\\w.-]{0,8}").matcher(resp);
+            if (m.find() && m.group().length() > ver.length()) return trimHit(m.group());
+        }
+        if (word != null) {
+            Matcher m = Pattern.compile("(?i)" + Pattern.quote(word)).matcher(resp);
+            if (m.find()) return m.group();
+        }
+        return null;
+    }
 
     private static String trimHit(String s) {
         String t = s.strip();

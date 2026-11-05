@@ -1611,6 +1611,8 @@ public class ActiveScanner {
             for (Finding pf : passiveRecheck(req, respBytes, svc, url)) {
                 if (normName(pf.name).equals(normName(f.name))) {
                     Finding.EndpointEntry ne = new Finding.EndpointEntry(old.endpoint, resp.statusCode(), req, respBytes, svc);
+                    // Use the fresh checker's own evidence text so the highlight points at what it matched now.
+                    ne.evidence = com.burpmax.evidence.EvidenceExtractor.computePassive(f.name, pf.evidence, req, respBytes);
                     f.affectedEndpoints.set(0, ne);
                     return new BackfillOutcome(BackfillStatus.VALIDATED, "Passive re-fetch",
                             "Issue still present (HTTP " + resp.statusCode() + ")");
