@@ -54,7 +54,10 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
-### Nuclei integration (optional)
+#### Backfill evidence
+The **Backfill evidence** button (top toolbar) re-checks only findings that have no captured request/response, for example ones restored from an older session. Each is re-fetched once with a plain GET (in-scope URLs only) and checked again; injection-type findings can also be re-probed with the low-risk modules of that family (time-based and replay modules never run). Evidence is attached only when the issue reproduces, and no new findings are added. Your ticked skips and the safety rules still apply. A results table lists every finding with its outcome (evidence captured, could not reproduce, request failed, not run, skipped) and can be copied or exported as CSV. Nuclei findings are skipped (re-run Nuclei instead).
+
+## Nuclei integration (optional)
 Needs the `nuclei` binary and its templates (`sudo apt install nuclei`, then `nuclei -update-templates`). Open **Active Scan > Nuclei templates**, pick goals (technology detection, exposed files, misconfigurations, admin panels, known CVEs, reflected GET issues, takeover). Goals are saved with scan profiles.
 - Only read-only plain-HTTP templates run. Templates that send POST/PUT/PATCH/DELETE, brute-force, use destructive payloads, are tagged intrusive/dos/fuzzing/default-login, or need an out-of-band server (unless you allow it) are rejected before anything is sent.
 - Results are imported as normal findings (evidence, Repeater, re-verify, host view, exports) and tagged **Nuclei**. The **Source** button above the table cycles All / BurpMax / Nuclei.

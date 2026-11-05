@@ -1396,6 +1396,7 @@ public class ActiveScanner {
      */
     private void runPassiveOnProbeResults(List<ActiveScanResult> probeResults) {
         if (probeResults == null || probeResults.isEmpty()) return;
+        if (backfilling) return;   // evidence backfill must never add new findings
         for (ActiveScanResult r : probeResults) {
             if (r == null || r.probeResponseBytes == null) continue;
             if (r.probeRequestBytes == null) continue;
@@ -1502,6 +1503,196 @@ public class ActiveScanner {
             String[] parts = start.split(" ", 3);
             return parts.length > 1 ? Integer.parseInt(parts[1].trim()) : 0;
         } catch (Exception e) { return 0; }
+    }
+
+    // ── Evidence backfill ─────────────────────────────────────────────────────
+    // Re-checks findings that have no captured traffic (e.g. restored from an older session).
+    // GET-only, in-scope only, low-risk modules only, user skip ticks honoured, RiskGuard on.
+    // Never adds findings; it only attaches traffic to existing ones when the issue reproduces.
+
+    public enum BackfillStatus { VALIDATED, NOT_REPRODUCED, FAILED, BLOCKED, UNSUPPORTED }
+
+    public static final class BackfillOutcome {
+        public final BackfillStatus status;
+        public final String method;   // "Passive re-fetch" / "Active re-probe" / "-"
+        public final String detail;
+        public BackfillOutcome(BackfillStatus s, String method, String detail) {
+            this.status = s; this.method = method; this.detail = detail;
+        }
+    }
+
+    private volatile boolean backfilling = false;
+
+    /** Findings that have no stored request/response at all. */
+    public static boolean lacksEvidence(Finding f) {
+        if (f == null || f.affectedEndpoints.isEmpty()) return false;
+        Finding.EndpointEntry e = f.affectedEndpoints.get(0);
+        boolean noResp = (e.rawResponse == null || e.rawResponse.length == 0)
+                && (e.probeResponse == null || e.probeResponse.length == 0);
+        return noResp;
+    }
+
+    /** Returns false when another scan is running. */
+    public boolean beginBackfill() {
+        if (running.getAndSet(true)) return false;
+        cancelled.set(false);
+        riskGuard.reset();
+        prepareFlow(true);
+        backfilling = true;
+        return true;
+    }
+
+    public void endBackfill() {
+        backfilling = false;
+        running.set(false);
+    }
+
+    /** Probe families that could have produced a finding with this name (empty = passive/unknown). */
+    static Set<String> activeFamiliesFor(String name) {
+        String n = name == null ? "" : name.toLowerCase();
+        Set<String> fam = new LinkedHashSet<>();
+        if (n.contains("sql") && !n.contains("nosql")) fam.add("SQLi");
+        if (n.contains("nosql")) fam.add("NoSQLi");
+        if (n.contains("command inj") || n.contains("cmdi") || n.contains("os command")) fam.add("CmdI");
+        if (n.contains("template inj") || n.contains("ssti")) fam.add("SSTI");
+        if (n.contains("xxe") || n.contains("xml external")) fam.add("XXE");
+        if (n.contains("ldap")) fam.add("LDAP");
+        if (n.contains("path traversal") || n.contains("directory traversal") || n.contains("local file")) fam.add("Path Traversal");
+        if (n.contains("prototype")) fam.add("Prototype Pollution");
+        if (n.contains("xss") || n.contains("cross-site scripting")) fam.add("XSS");
+        if (n.contains("cors")) fam.add("CORS");
+        if (n.contains("host header")) fam.add("Host Header");
+        if (n.contains("csrf")) fam.add("CSRF");
+        if (n.contains("idor") || n.contains("direct object")) fam.add("IDOR");
+        if (n.contains("open redirect")) fam.add("Open Redirect");
+        if (n.contains("auth bypass") || n.contains("authentication bypass")) fam.add("Auth Bypass");
+        if (n.contains("graphql")) fam.add("GraphQL");
+        if (n.contains("oauth") || n.contains("oidc")) fam.add("OAuth/OIDC");
+        return fam;
+    }
+
+    private static String normName(String n) {
+        return n == null ? "" : n.replace("[ACTIVE]", "").trim().toLowerCase();
+    }
+
+    public BackfillOutcome backfillOne(Finding f, boolean allowActive) {
+        try {
+            if (Finding.SOURCE_NUCLEI.equals(f.source))
+                return new BackfillOutcome(BackfillStatus.UNSUPPORTED, "-", "Nuclei finding: re-run Nuclei to refresh it");
+            if (f.affectedEndpoints.isEmpty())
+                return new BackfillOutcome(BackfillStatus.UNSUPPORTED, "-", "No endpoint stored");
+            Finding.EndpointEntry old = f.affectedEndpoints.get(0);
+            String urlStr = f.url != null && f.url.startsWith("http") ? f.url : old.endpoint;
+            URL url;
+            try { url = new URL(urlStr); }
+            catch (Exception e) { return new BackfillOutcome(BackfillStatus.UNSUPPORTED, "-", "Endpoint is not a full URL"); }
+            if (!callbacks.isInScope(url))
+                return new BackfillOutcome(BackfillStatus.BLOCKED, "-", "Out of Burp scope (not contacted)");
+
+            final String proto = url.getProtocol();
+            final String host = url.getHost();
+            final int port = url.getPort() > 0 ? url.getPort() : ("https".equalsIgnoreCase(proto) ? 443 : 80);
+            IHttpService svc = helpers.buildHttpService(host, port, proto);
+            String path = url.getFile().isEmpty() ? "/" : url.getFile();
+            String hostHdr = url.getPort() > 0 && url.getPort() != url.getDefaultPort() ? host + ":" + url.getPort() : host;
+            byte[] req = ("GET " + path + " HTTP/1.1\r\nHost: " + hostHdr
+                    + "\r\nUser-Agent: Mozilla/5.0 (BurpMax evidence backfill)\r\nAccept: */*\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+
+            HttpSender sender = newSender();
+            HttpSender.Response resp = sender.send(svc, req);
+            if (cancelled.get()) return new BackfillOutcome(BackfillStatus.FAILED, "-", "Cancelled");
+            if (resp == null || resp.raw() == null || resp.raw().length == 0)
+                return new BackfillOutcome(BackfillStatus.FAILED, "-",
+                        "No response (timeout, blocked by safety rules, or scan paused/cancelled)");
+            byte[] respBytes = resp.raw();
+
+            // 1. Passive re-validation on the fresh response
+            for (Finding pf : passiveRecheck(req, respBytes, svc, url)) {
+                if (normName(pf.name).equals(normName(f.name))) {
+                    Finding.EndpointEntry ne = new Finding.EndpointEntry(old.endpoint, resp.statusCode(), req, respBytes, svc);
+                    f.affectedEndpoints.set(0, ne);
+                    return new BackfillOutcome(BackfillStatus.VALIDATED, "Passive re-fetch",
+                            "Issue still present (HTTP " + resp.statusCode() + ")");
+                }
+            }
+
+            // 2. Targeted active re-probe (low-risk modules only)
+            Set<String> fams = activeFamiliesFor(f.name);
+            if (fams.isEmpty())
+                return new BackfillOutcome(BackfillStatus.NOT_REPRODUCED, "Passive re-fetch",
+                        "Not present in a fresh GET of this URL (HTTP " + resp.statusCode()
+                        + "). Original may have needed a different request or session");
+            if (!allowActive)
+                return new BackfillOutcome(BackfillStatus.UNSUPPORTED, "-", "Needs an active re-probe (option is off)");
+
+            Set<String> skip = new HashSet<>(ProbeCatalog.allSkipKeys());
+            Set<String> wanted = new HashSet<>();
+            for (ProbeCatalog.Module m : ProbeCatalog.all()) {
+                if (!(fams.contains(m.family()) || fams.contains(m.skipKey()) || fams.contains(m.entry()))) continue;
+                if (m.risk() != ProbeCatalog.Risk.LOW) continue;      // never time-based / replay in backfill
+                wanted.add(m.skipKey()); wanted.add(m.family()); wanted.add(m.entry());
+            }
+            if (wanted.isEmpty())
+                return new BackfillOutcome(BackfillStatus.BLOCKED, "-", "Only higher-risk modules can confirm this; not run");
+            skip.removeAll(wanted);
+            skip.addAll(userSkipProbes);           // your ticked skips always win
+
+            final byte[] fReq = req, fResp = respBytes; final IHttpService fSvc = svc;
+            IHttpRequestResponse item = new IHttpRequestResponse() {
+                public byte[] getRequest() { return fReq; }
+                public byte[] getResponse() { return fResp; }
+                public IHttpService getHttpService() { return fSvc; }
+            };
+            ProbeContext ctx = buildProbeContext(item);
+            if (ctx == null)
+                return new BackfillOutcome(BackfillStatus.BLOCKED, "-", "Static / skippable URL; probes not run");
+            skip.addAll(probeFilter(ctx));
+            skip.removeAll(Collections.emptySet());
+            List<ActiveScanResult> results = runProbes(ctx, new RequestBuilder(helpers), skip);
+            ActiveScanResult best = null;
+            for (ActiveScanResult r : results) {
+                if (!normName(r.name).equals(normName(f.name))) continue;
+                if (best == null || (r.parameter != null && r.parameter.equals(f.primaryParameter()))) best = r;
+            }
+            if (best == null)
+                return new BackfillOutcome(BackfillStatus.NOT_REPRODUCED, "Active re-probe",
+                        "Probes ran (" + String.join(", ", fams) + ") but did not trigger it again");
+            Finding tmp = toFinding(best, ctx);
+            Finding.EndpointEntry te = tmp.affectedEndpoints.get(0);
+            f.affectedEndpoints.set(0, new Finding.EndpointEntry(old.endpoint, te.statusCode,
+                    te.rawRequest, te.rawResponse, svc, te.probeRequest, te.probeResponse,
+                    te.payload, te.parameter, te.timingMs));
+            return new BackfillOutcome(BackfillStatus.VALIDATED, "Active re-probe",
+                    "Reproduced; probe request/response attached");
+        } catch (Exception e) {
+            return new BackfillOutcome(BackfillStatus.FAILED, "-", "Error: " + e.getMessage());
+        }
+    }
+
+    /** Runs the passive checkers over one request/response pair without touching the store. */
+    private List<Finding> passiveRecheck(byte[] req, byte[] resp, IHttpService svc, URL url) {
+        IRequestInfo ri = helpers.analyzeRequest(svc, req);
+        IResponseInfo rs = helpers.analyzeResponse(resp);
+        Map<String, String> reqHdrs = new LinkedHashMap<>();
+        for (String h : ri.getHeaders().subList(Math.min(1, ri.getHeaders().size()), ri.getHeaders().size())) {
+            int c = h.indexOf(':'); if (c > 0) reqHdrs.put(h.substring(0, c).trim().toLowerCase(), h.substring(c + 1).trim());
+        }
+        Map<String, String> respHdrs = new LinkedHashMap<>();
+        List<String> cookies = new ArrayList<>();
+        List<String> hl = rs.getHeaders();
+        for (String h : hl.subList(Math.min(1, hl.size()), hl.size())) {
+            int c = h.indexOf(':'); if (c < 0) continue;
+            String k = h.substring(0, c).trim().toLowerCase(), v = h.substring(c + 1).trim();
+            respHdrs.put(k, v);
+            if ("set-cookie".equals(k)) cookies.add(v);
+        }
+        int off = Math.max(0, Math.min(rs.getBodyOffset(), resp.length));
+        int len = Math.min(resp.length - off, 512_000);
+        String body = helpers.bytesToString(Arrays.copyOfRange(resp, off, off + len));
+        return com.burpmax.scanner.Dispatcher.dispatch(reqHdrs, respHdrs, cookies, body,
+                respHdrs.getOrDefault("content-type", ""), "GET", url.getHost(), url.toString(),
+                rs.getStatusCode(), "", req, resp, svc);
     }
 
     // ── UI callbacks ──────────────────────────────────────────────────────────

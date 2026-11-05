@@ -93,6 +93,7 @@ public class UIBuilder {
     private final JButton   scanPauseBtn = ghostBtn("\u23F8 Pause scan");
     private final JButton   scanLogBtn   = ghostBtn("\uD83D\uDCDC Request log");
     private final JButton   reverifyBtn = ghostBtn("\u21BB Re-verify");
+    private final JButton   backfillBtn = ghostBtn("Backfill evidence");
     private final AnalystHistory history = new AnalystHistory(this::historyChanged);
     private final JPanel    affStrip  = new JPanel(new BorderLayout());
     private final JLabel    affCount  = darkLabel("");
@@ -270,6 +271,13 @@ public class UIBuilder {
         row1Right.add(Box.createHorizontalStrut(6));
         row1Right.add(undoBtn);
         row1Right.add(redoBtn);
+        row1Right.add(Box.createHorizontalStrut(6));
+        backfillBtn.setToolTipText("Re-check only the findings that have no captured request/response and attach evidence where the issue reproduces");
+        backfillBtn.addActionListener(e -> BackfillDialog.start(panel, callbacks, store.getAll(),
+                lastUiSkips != null ? lastUiSkips : java.util.Set.of(),
+                activeScanner != null && activeScanner.isRunning(),
+                () -> { refresh(); session.scheduleAutoSave(); }));
+        row1Right.add(backfillBtn);
         row1Right.add(Box.createHorizontalStrut(6));
         row1Right.add(clearBtn);
         row1Right.add(pauseBtn);
