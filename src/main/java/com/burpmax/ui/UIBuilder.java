@@ -89,6 +89,10 @@ public class UIBuilder {
     private HostGroupView hostView;
     /** 0 = all, 1 = BurpMax only, 2 = Nuclei only. Click the Source button to cycle. */
     private int sourceFilter = 0;
+    private String filterCategory = null;   // null = all
+    private String filterTitle = null;      // null = all
+    private JComboBox<String> catCombo, titleCombo;
+    private boolean combosAdjusting = false;
     private java.util.Set<String> lastUiSkips = null;
     private final JButton   scanPauseBtn = ghostBtn("\u23F8 Pause scan");
     private final JButton   scanLogBtn   = ghostBtn("\uD83D\uDCDC Request log");
@@ -412,6 +416,32 @@ public class UIBuilder {
         });
         bar.add(srcToggle);
 
+        // Category + finding-title filters (lists are rebuilt from the findings on every refresh)
+        catCombo = new JComboBox<>(new String[]{"Category: All"});
+        titleCombo = new JComboBox<>(new String[]{"Finding: All"});
+        for (JComboBox<String> cb2 : java.util.List.of(catCombo, titleCombo)) {
+            cb2.setFont(FONT_TINY);
+            cb2.setMaximumRowCount(20);
+            cb2.setPrototypeDisplayValue("Category: Authentication & access control");
+        }
+        titleCombo.setPrototypeDisplayValue("Finding: Outdated Apache httpd Detected: 2.4.1");
+        catCombo.setToolTipText("Show only one category of finding");
+        titleCombo.setToolTipText("Show only findings with this exact title");
+        catCombo.addActionListener(e -> {
+            if (combosAdjusting) return;
+            Object o = catCombo.getSelectedItem();
+            filterCategory = (catCombo.getSelectedIndex() <= 0 || o == null) ? null : o.toString().replaceFirst("^(.*) \\(\\d+\\)$", "$1");
+            refresh();
+        });
+        titleCombo.addActionListener(e -> {
+            if (combosAdjusting) return;
+            Object o = titleCombo.getSelectedItem();
+            filterTitle = (titleCombo.getSelectedIndex() <= 0 || o == null) ? null : o.toString().replaceFirst("^(.*) \\(\\d+\\)$", "$1");
+            refresh();
+        });
+        bar.add(catCombo);
+        bar.add(titleCombo);
+
         // ── Free-text search ──────────────────────────────────────
         bar.add(Box.createHorizontalStrut(16));
 
@@ -529,19 +559,28 @@ public class UIBuilder {
         viewHost.setOpaque(false);
         viewHost.add(tableScroll, "table");
         viewHost.add(hostView, "hosts");
-        JToggleButton byHost = new JToggleButton("Group by host");
-        byHost.setFont(Widgets.UI_SMALL);
-        byHost.setFocusPainted(false);
-        byHost.setBackground(C_SURFACE);
-        byHost.setForeground(C_TEXT_DIM);
-        byHost.setToolTipText("Switch between the flat findings table and a per-host view");
-        byHost.addActionListener(e -> {
-            viewCards.show(viewHost, byHost.isSelected() ? "hosts" : "table");
-            if (byHost.isSelected()) hostView.setFindings(visibleFindings);
+        JLabel groupLbl = new JLabel("Group by:");
+        groupLbl.setFont(Widgets.UI_SMALL);
+        groupLbl.setForeground(C_TEXT_DIM);
+        JComboBox<String> groupBy = new JComboBox<>(new String[]{"None (table)", "Host", "Finding title", "Category"});
+        groupBy.setFont(Widgets.UI_SMALL);
+        groupBy.setToolTipText("Switch between the flat findings table and grouped views");
+        groupBy.addActionListener(e -> {
+            int i = groupBy.getSelectedIndex();
+            viewCards.show(viewHost, i == 0 ? "table" : "hosts");
+            if (i > 0) {
+                hostView.setMode(switch (i) {
+                    case 2 -> HostGroupView.Mode.TITLE;
+                    case 3 -> HostGroupView.Mode.CATEGORY;
+                    default -> HostGroupView.Mode.HOST;
+                });
+                hostView.setFindings(visibleFindings);
+            }
         });
         JPanel viewBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         viewBar.setBackground(C_SURFACE);
-        viewBar.add(byHost);
+        viewBar.add(groupLbl);
+        viewBar.add(groupBy);
         leftPanel.add(viewBar, BorderLayout.NORTH);
         leftPanel.add(viewHost, BorderLayout.CENTER);
 
@@ -717,6 +756,7 @@ public class UIBuilder {
         });
 
         JScrollPane detailScroll = new JScrollPane(content);
+        Widgets.forwardWheel(content, detailScroll);
         styleScrollPane(detailScroll);
         detailScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 
@@ -843,6 +883,37 @@ public class UIBuilder {
 
     private static String nvl(String s) { return s != null ? s : ""; }
 
+    /** Keeps the Category / Finding drop-downs in step with the findings (counts included). */
+    private void rebuildFilterCombos(List<Finding> all) {
+        if (catCombo == null || titleCombo == null) return;
+        java.util.Map<String, Integer> cats = new java.util.TreeMap<>(), titles = new java.util.TreeMap<>();
+        for (Finding f : all) {
+            if (!showSuppressed && f.suppressed) continue;
+            cats.merge(com.burpmax.model.FindingCategory.of(f), 1, Integer::sum);
+            titles.merge(f.name == null ? "(untitled)" : f.name, 1, Integer::sum);
+        }
+        if (filterCategory != null && !cats.containsKey(filterCategory)) filterCategory = null;
+        if (filterTitle != null && !titles.containsKey(filterTitle)) filterTitle = null;
+        combosAdjusting = true;
+        try {
+            fillCombo(catCombo, "Category: All", cats, filterCategory);
+            fillCombo(titleCombo, "Finding: All", titles, filterTitle);
+        } finally { combosAdjusting = false; }
+    }
+
+    private static void fillCombo(JComboBox<String> box, String allLabel, java.util.Map<String, Integer> items, String selected) {
+        DefaultComboBoxModel<String> m = new DefaultComboBoxModel<>();
+        m.addElement(allLabel);
+        int sel = 0, i = 1;
+        for (java.util.Map.Entry<String, Integer> e : items.entrySet()) {
+            m.addElement(e.getKey() + " (" + e.getValue() + ")");
+            if (e.getKey().equals(selected)) sel = i;
+            i++;
+        }
+        box.setModel(m);
+        box.setSelectedIndex(sel);
+    }
+
     public void refresh() {
         List<Finding> all = store.getAll();
         final String ft = (filterText != null && !filterText.isBlank())
@@ -851,8 +922,11 @@ public class UIBuilder {
                 .filter(f -> (showSuppressed || !f.suppressed) &&
                              (filterSev == null || filterSev.equals(f.effectiveSeverity())) &&
                              (sourceFilter == 0 || (sourceFilter == 2) == Finding.SOURCE_NUCLEI.equals(f.source)) &&
+                             (filterCategory == null || filterCategory.equals(com.burpmax.model.FindingCategory.of(f))) &&
+                             (filterTitle == null || filterTitle.equals(f.name)) &&
                              (ft == null || matchesText(f, ft)))
                 .toList();
+        rebuildFilterCombos(all);
 
         tblModel.setFindings(visibleFindings);
         if (hostView != null) hostView.setFindings(visibleFindings);
@@ -861,7 +935,8 @@ public class UIBuilder {
         // so it matches the summary label. Without a filter it shows all non-suppressed.
         var s = store.summary();
         int fp = store.getSuppressed().size();
-        boolean filtered = filterSev != null || sourceFilter != 0 || (filterText != null && !filterText.isBlank());
+        boolean filtered = filterSev != null || sourceFilter != 0 || filterCategory != null || filterTitle != null
+                || (filterText != null && !filterText.isBlank());
         int badgeCount = filtered ? visibleFindings.size() : store.getVisible().size();
         lblTotal.setText(String.valueOf(badgeCount));
         lblCrit.setText(String.valueOf(s.getOrDefault(Finding.SEV_CRITICAL, 0)));
@@ -870,7 +945,9 @@ public class UIBuilder {
         lblLow.setText(String.valueOf(s.getOrDefault(Finding.SEV_LOW, 0)));
 
         String filtStr   = (filterSev  != null ? " [" + filterSev + "]" : "")
-                + (sourceFilter == 1 ? " [BurpMax]" : sourceFilter == 2 ? " [Nuclei]" : "");
+                + (sourceFilter == 1 ? " [BurpMax]" : sourceFilter == 2 ? " [Nuclei]" : "")
+                + (filterCategory != null ? " [" + filterCategory + "]" : "")
+                + (filterTitle != null ? " [" + filterTitle + "]" : "");
         String searchStr = (filterText != null && !filterText.isBlank())
                 ? " ‹" + filterText.strip() + "›" : "";
         String fpStr     = fp > 0 ? "  |  " + fp + " FP" : "";
@@ -1468,6 +1545,8 @@ public class UIBuilder {
         List<Finding> out = new ArrayList<>();
         for (Finding f : store.getVisible()) {
             if ((filterSev == null || filterSev.equals(f.effectiveSeverity()))
+                    && (filterCategory == null || filterCategory.equals(com.burpmax.model.FindingCategory.of(f)))
+                    && (filterTitle == null || filterTitle.equals(f.name))
                     && (sourceFilter == 0 || (sourceFilter == 2) == Finding.SOURCE_NUCLEI.equals(f.source))) out.add(f);
         }
         return out;

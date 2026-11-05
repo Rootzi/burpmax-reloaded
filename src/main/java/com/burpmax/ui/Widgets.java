@@ -1,6 +1,7 @@
 package com.burpmax.ui;
 
 import javax.swing.*;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 
@@ -83,5 +84,50 @@ final class Widgets {
         @Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return Math.max(32, r.height - 32); }
         @Override public boolean getScrollableTracksViewportWidth() { return true; }
         @Override public boolean getScrollableTracksViewportHeight() { return false; }
+    }
+
+    /**
+     * Makes the mouse wheel scroll {@code outer} even when the pointer is over a nested scroll pane,
+     * text area, combo box or spinner (which otherwise swallow the wheel). Components added later are
+     * picked up automatically.
+     */
+    static void forwardWheel(Container root, JScrollPane outer) {
+        java.awt.event.MouseWheelListener fwd = e -> {
+            Component src = e.getComponent();
+            JScrollPane inner = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, src);
+            // Inside a nested scroll pane: let that pane try first (it hands over when it cannot scroll).
+            JComponent target = (inner != null && inner != outer) ? inner : outer;
+            target.dispatchEvent(SwingUtilities.convertMouseEvent(src, e, target));
+        };
+        java.awt.event.ContainerListener adder = new java.awt.event.ContainerAdapter() {
+            @Override public void componentAdded(java.awt.event.ContainerEvent ev) { hook(ev.getChild(), fwd, this, outer); }
+        };
+        hook(root, fwd, adder, outer);
+    }
+
+    private static void hook(Component c, java.awt.event.MouseWheelListener fwd,
+                             java.awt.event.ContainerListener adder, JScrollPane outer) {
+        if (c == outer) return;
+        boolean isInnerScroll = c instanceof JScrollPane;
+        for (java.awt.event.MouseWheelListener l : c.getMouseWheelListeners()) if (l == fwd) return;
+        if (c instanceof JScrollPane sp) {
+            // inner scroll panes: scroll themselves when they can, otherwise hand over to the outer pane
+            sp.setWheelScrollingEnabled(false);
+            sp.addMouseWheelListener(e -> {
+                JScrollBar b = sp.getVerticalScrollBar();
+                boolean canMove = b.isVisible()
+                        && ((e.getWheelRotation() < 0 && b.getValue() > b.getMinimum())
+                         || (e.getWheelRotation() > 0 && b.getValue() + b.getVisibleAmount() < b.getMaximum()));
+                if (canMove) b.setValue(b.getValue() + e.getUnitsToScroll() * b.getUnitIncrement());
+                else outer.dispatchEvent(SwingUtilities.convertMouseEvent(sp, e, outer));
+            });
+        } else if (c instanceof JTextComponent || c instanceof JComboBox || c instanceof JSpinner
+                || c instanceof JSlider || c instanceof JTable || c instanceof JList) {
+            c.addMouseWheelListener(fwd);
+        }
+        if (c instanceof Container ct) {
+            ct.addContainerListener(adder);
+            for (Component ch : ct.getComponents()) hook(ch, fwd, adder, outer);
+        }
     }
 }

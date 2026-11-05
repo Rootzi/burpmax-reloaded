@@ -54,7 +54,10 @@ This build adds client-safety controls, better evidence, and workflow features. 
 - **Copy hosts** (button, or right-click on a multi-selection): URLs (default ports omitted), hostnames, host:port, IPs (IPv4 first). IP-only targets are never dropped.
 - **Group by host** view (searchable), **Undo / Redo** (Ctrl+Z / Ctrl+Y) for FP, severity, status and notes, including bulk changes.
 
-#### Scan specific hosts
+#### Grouped views and filters
+The findings list has a **Group by** drop-down: None (table), Host, Finding title, or Category (category, then title, then each affected host). Click a table header to sort. The filter bar also has **Category** and **Finding** drop-downs (with counts) that work together with the severity, source and search filters.
+
+### Scan specific hosts
 The scan dialog has a **Target hosts** section listing every in-scope host from the site map (with URL counts). Untick hosts to leave them out, or type hosts / `host:port` / `*.example.com` to add. Leave everything ticked to scan the whole scope. The limit applies to BurpMax's modules and to Nuclei.
 
 ### Backfill evidence

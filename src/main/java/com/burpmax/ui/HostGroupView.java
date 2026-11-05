@@ -38,6 +38,9 @@ final class HostGroupView extends JPanel {
         @Override public String toString() { return label; }
     }
 
+    enum Mode { HOST, TITLE, CATEGORY }
+    private Mode mode = Mode.HOST;
+
     private final JTree tree = new JTree();
     private final JTextField search = new JTextField();
     private final JLabel summary = new JLabel(" ");
@@ -77,7 +80,7 @@ final class HostGroupView extends JPanel {
         tree.setShowsRootHandles(true);
         tree.setBackground(C_ROOT);
         tree.setRowHeight(24);
-        tree.setCellRenderer(new Renderer());
+        tree.setCellRenderer(new Renderer(() -> mode));
         tree.getSelectionModel().setSelectionMode(TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
         tree.addTreeSelectionListener(e -> {
             TreePath p = e.getNewLeadSelectionPath();
@@ -97,6 +100,16 @@ final class HostGroupView extends JPanel {
 
     void expandAllForTest() { for (int i = 0; i < tree.getRowCount(); i++) tree.expandRow(i); }
 
+    void setMode(Mode m) {
+        this.mode = m == null ? Mode.HOST : m;
+        search.setToolTipText(switch (this.mode) {
+            case HOST -> "Filter hosts: hostname, IP, port or finding name";
+            case TITLE -> "Filter finding titles or hosts";
+            case CATEGORY -> "Filter categories, finding titles or hosts";
+        });
+        rebuild();
+    }
+
     void setFindings(List<Finding> findings) {
         this.source = findings == null ? List.of() : findings;
         rebuild();
@@ -107,10 +120,18 @@ final class HostGroupView extends JPanel {
     private void rebuild() {
         String q = search.getText().trim().toLowerCase(Locale.ROOT);
 
-        // host label -> findings (LinkedHashMap keeps insertion order before we sort)
+        // group label -> findings (LinkedHashMap keeps insertion order before we sort)
         Map<String, List<Finding>> byHost = new LinkedHashMap<>();
         Map<String, Boolean> isIp = new HashMap<>();
         for (Finding f : source) {
+            if (mode == Mode.TITLE) {
+                byHost.computeIfAbsent(f.name == null || f.name.isBlank() ? "(untitled)" : f.name, k -> new ArrayList<>()).add(f);
+                continue;
+            }
+            if (mode == Mode.CATEGORY) {
+                byHost.computeIfAbsent(com.burpmax.model.FindingCategory.of(f), k -> new ArrayList<>()).add(f);
+                continue;
+            }
             Set<String> seen = new LinkedHashSet<>();
             for (HostFormats.Target t : HostFormats.targets(List.of(f))) {
                 boolean def = ("https".equals(t.scheme()) && t.port() == 443) || ("http".equals(t.scheme()) && t.port() == 80);
@@ -129,12 +150,10 @@ final class HostGroupView extends JPanel {
         for (Map.Entry<String, List<Finding>> e : byHost.entrySet()) {
             List<Finding> fs = e.getValue();
             if (!q.isEmpty() && !e.getKey().toLowerCase(Locale.ROOT).contains(q)) {
-                fs = fs.stream().filter(f -> f.name != null && f.name.toLowerCase(Locale.ROOT).contains(q)).toList();
+                fs = fs.stream().filter(f -> matches(f, q)).toList();
                 if (fs.isEmpty()) continue;
             }
-            int[] c = new int[SEV_ORDER.size()];
-            for (Finding f : fs) { int i = SEV_ORDER.indexOf(f.effectiveSeverity()); if (i >= 0) c[i]++; }
-            hosts.add(new HostNode(e.getKey(), isIp.getOrDefault(e.getKey(), false), new ArrayList<>(fs), c));
+            hosts.add(node(e.getKey(), isIp.getOrDefault(e.getKey(), false), fs));
         }
         hosts.sort(Comparator
                 .comparing((HostNode h) -> worst(h)).thenComparing(h -> -h.findings().size())
@@ -148,13 +167,25 @@ final class HostGroupView extends JPanel {
             if (tree.isExpanded(new TreePath(n.getPath()))) open.add(n.getUserObject().toString());
         }
 
-        DefaultMutableTreeNode root = new DefaultMutableTreeNode("hosts");
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode("groups");
         for (HostNode h : hosts) {
             DefaultMutableTreeNode hn = new DefaultMutableTreeNode(h);
-            List<Finding> sorted = new ArrayList<>(h.findings());
-            sorted.sort(Comparator.comparingInt((Finding f) -> SEV_ORDER.indexOf(f.effectiveSeverity()))
-                    .thenComparing(f -> f.name == null ? "" : f.name));
-            for (Finding f : sorted) hn.add(new DefaultMutableTreeNode(f));
+            if (mode == Mode.CATEGORY) {
+                Map<String, List<Finding>> byTitle = new LinkedHashMap<>();
+                for (Finding f : h.findings())
+                    byTitle.computeIfAbsent(f.name == null || f.name.isBlank() ? "(untitled)" : f.name, k -> new ArrayList<>()).add(f);
+                List<HostNode> titles = new ArrayList<>();
+                for (Map.Entry<String, List<Finding>> te : byTitle.entrySet()) titles.add(node(te.getKey(), false, te.getValue()));
+                titles.sort(Comparator.comparing((HostNode t) -> worst(t)).thenComparing(t -> -t.findings().size())
+                        .thenComparing(HostNode::label, String.CASE_INSENSITIVE_ORDER));
+                for (HostNode t : titles) {
+                    DefaultMutableTreeNode tn = new DefaultMutableTreeNode(t);
+                    addLeaves(tn, t.findings());
+                    hn.add(tn);
+                }
+            } else {
+                addLeaves(hn, h.findings());
+            }
             root.add(hn);
         }
         tree.setModel(new DefaultTreeModel(root));
@@ -165,7 +196,33 @@ final class HostGroupView extends JPanel {
             }
         }
         int total = hosts.stream().mapToInt(h -> h.findings().size()).sum();
-        summary.setText(hosts.size() + (hosts.size() == 1 ? " host" : " hosts") + "  ·  " + total + " findings");
+        String noun = switch (mode) {
+            case HOST -> hosts.size() == 1 ? "host" : "hosts";
+            case TITLE -> hosts.size() == 1 ? "finding type" : "finding types";
+            case CATEGORY -> hosts.size() == 1 ? "category" : "categories";
+        };
+        summary.setText(hosts.size() + " " + noun + "  ·  " + total + " findings");
+    }
+
+    private HostNode node(String label, boolean ip, List<Finding> fs) {
+        int[] c = new int[SEV_ORDER.size()];
+        for (Finding f : fs) { int i = SEV_ORDER.indexOf(f.effectiveSeverity()); if (i >= 0) c[i]++; }
+        return new HostNode(label, ip, new ArrayList<>(fs), c);
+    }
+
+    private boolean matches(Finding f, String q) {
+        return (f.name != null && f.name.toLowerCase(Locale.ROOT).contains(q))
+                || (f.host != null && f.host.toLowerCase(Locale.ROOT).contains(q))
+                || (f.url != null && f.url.toLowerCase(Locale.ROOT).contains(q));
+    }
+
+    private void addLeaves(DefaultMutableTreeNode parent, List<Finding> fs) {
+        List<Finding> sorted = new ArrayList<>(fs);
+        Comparator<Finding> bySev = Comparator.comparingInt((Finding f) -> SEV_ORDER.indexOf(f.effectiveSeverity()));
+        sorted.sort(mode == Mode.HOST
+                ? bySev.thenComparing(f -> f.name == null ? "" : f.name)
+                : bySev.thenComparing(f -> f.host == null ? "" : f.host));
+        for (Finding f : sorted) parent.add(new DefaultMutableTreeNode(f));
     }
 
     private static int worst(HostNode h) {
@@ -245,6 +302,8 @@ final class HostGroupView extends JPanel {
 
     private static final class Renderer implements javax.swing.tree.TreeCellRenderer {
         private static final String[] AB = {"C", "H", "M", "L", "I"};
+        private final java.util.function.Supplier<Mode> modeOf;
+        Renderer(java.util.function.Supplier<Mode> m) { this.modeOf = m; }
 
         @Override public Component getTreeCellRendererComponent(JTree t, Object value, boolean sel,
                 boolean exp, boolean leaf, int row, boolean focus) {
@@ -258,7 +317,13 @@ final class HostGroupView extends JPanel {
                 }
             } else if (o instanceof Finding f) {
                 r.add("\u25CF", FONT_UI, sevColor(f.effectiveSeverity()));
-                r.add((f.name == null ? "" : f.name) + (f.suppressed ? "  (FP)" : ""), FONT_UI, f.suppressed ? C_TEXT_MUTED : C_TEXT);
+                String label;
+                if (modeOf.get() == Mode.HOST) label = f.name == null ? "" : f.name;
+                else {
+                    String ep = f.endpoint == null ? "" : f.endpoint;
+                    label = (f.host == null ? "" : f.host) + (ep.isEmpty() || ep.equals(f.host) ? "" : "   " + ep);
+                }
+                r.add(label + (f.suppressed ? "  (FP)" : ""), FONT_UI, f.suppressed ? C_TEXT_MUTED : C_TEXT);
             } else {
                 r.add(String.valueOf(o), FONT_UI, C_TEXT);
             }
