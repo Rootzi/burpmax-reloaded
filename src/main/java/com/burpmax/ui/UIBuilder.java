@@ -487,6 +487,7 @@ public class UIBuilder {
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 int row = table.getSelectedRow();
+                if (row >= 0) row = table.convertRowIndexToModel(row);
                 if (row >= 0 && visibleFindings != null && row < visibleFindings.size()) {
                     populateDetail(visibleFindings.get(row));
                 }
@@ -752,6 +753,28 @@ public class UIBuilder {
         header.setForeground(C_TEXT_MUTED);
         header.setFont(FONT_TINY);
         header.setBorder(BorderFactory.createMatteBorder(0,0,1,0,C_BORDER));
+
+        // Click a header to sort (click again to reverse, third click restores original order)
+        javax.swing.table.TableRowSorter<FindingTableModel> sorter =
+                new javax.swing.table.TableRowSorter<>(tblModel);
+        java.util.List<String> sevOrder = java.util.List.of("Info", "Low", "Medium", "High", "Critical");
+        java.util.Comparator<Object> bySeverity = (a, b) -> Integer.compare(
+                sevOrder.indexOf(String.valueOf(a).replace("*", "").trim()),
+                sevOrder.indexOf(String.valueOf(b).replace("*", "").trim()));
+        java.util.Comparator<Object> byNumber = (a, b) -> {
+            double x, y;
+            try { x = Double.parseDouble(String.valueOf(a).trim()); } catch (Exception ex) { x = -1; }
+            try { y = Double.parseDouble(String.valueOf(b).trim()); } catch (Exception ex) { y = -1; }
+            return Double.compare(x, y);
+        };
+        java.util.Comparator<Object> byText = (a, b) ->
+                String.valueOf(a).compareToIgnoreCase(String.valueOf(b));
+        sorter.setComparator(1, bySeverity);
+        sorter.setComparator(4, byNumber);
+        sorter.setComparator(6, byNumber);
+        for (int c : new int[]{2, 3, 5, 7, 8}) sorter.setComparator(c, byText);
+        sorter.setSortsOnUpdates(false);
+        table.setRowSorter(sorter);
 
         // Column widths
         int[] widths = {35, 90, 280, 200, 55, 90, 50, 80, 70};
