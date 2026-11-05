@@ -257,8 +257,17 @@ public class Finding {
         o.put("remediation_status", remediationStatus);
 
         JSONArray eps = new JSONArray();
+        int epIdx = 0;
         for (EndpointEntry e : affectedEndpoints) {
             JSONObject ej = new JSONObject();
+            // Keep the captured traffic too, so evidence, Repeater, re-verify and curl still work
+            // after a session is loaded. Capped, and only for the first few endpoints of a finding,
+            // to keep session files a sensible size.
+            if (epIdx++ < RAW_ENDPOINTS) {
+                java.util.List<String> hits = e.evidence != null ? e.evidence.responseMatches() : java.util.List.of();
+                if (e.rawRequest  != null) ej.put("raw_req",  java.util.Base64.getEncoder().encodeToString(compact(e.rawRequest,  java.util.List.of(), RAW_REQ_CAP)));
+                if (e.rawResponse != null) ej.put("raw_resp", java.util.Base64.getEncoder().encodeToString(compact(e.rawResponse, hits, RAW_RESP_CAP)));
+            }
             ej.put("endpoint",    e.endpoint);
             ej.put("status_code", e.statusCode);
             // Serialize probe PoC data as Base64 so highlights survive session save/load
@@ -331,11 +340,16 @@ public class Finding {
                     if (ej.has("probe_req"))  probeReq  = java.util.Base64.getDecoder().decode(ej.optString("probe_req",  ""));
                     if (ej.has("probe_resp")) probeResp = java.util.Base64.getDecoder().decode(ej.optString("probe_resp", ""));
                 } catch (Exception ignored) {}
+                byte[] rawReq = null, rawResp = null;
+                try {
+                    if (ej.has("raw_req"))  rawReq  = java.util.Base64.getDecoder().decode(ej.optString("raw_req",  ""));
+                    if (ej.has("raw_resp")) rawResp = java.util.Base64.getDecoder().decode(ej.optString("raw_resp", ""));
+                } catch (Exception ignored) {}
                 String pl    = ej.has("payload")   ? ej.optString("payload",   null) : null;
                 String param = ej.has("parameter") ? ej.optString("parameter", null) : null;
                 long   tms   = ej.has("timing_ms") ? ej.optLong("timing_ms", -1L) : -1L;
                 EndpointEntry entry = new EndpointEntry(
-                        ep, ej.optInt("status_code", 0), null, null, null,
+                        ep, ej.optInt("status_code", 0), rawReq, rawResp, null,
                         probeReq, probeResp, pl, param, tms);
                 if (ej.has("ev_logic")) {
                     java.util.List<String> rh = new java.util.ArrayList<>(), qh = new java.util.ArrayList<>();
@@ -348,6 +362,34 @@ public class Finding {
             }
         }
         return f;
+    }
+
+    // ── Saved-session traffic ─────────────────────────────────────────────────
+    private static final int RAW_ENDPOINTS = 5;
+    private static final int RAW_REQ_CAP   = 16 * 1024;
+    private static final int RAW_RESP_CAP  = 64 * 1024;
+
+    /**
+     * Shrink a message for saving. Small messages are kept whole. A big one keeps its start
+     * (status line, headers, beginning of the body) plus a window around the first piece of
+     * matched text, so the proof is still there with a visible "trimmed" marker.
+     */
+    static byte[] compact(byte[] raw, java.util.List<String> hits, int cap) {
+        if (raw.length <= cap) return raw;
+        String text = new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1);
+        int head = cap / 2;
+        int at = -1;
+        for (String h : hits) { int i = text.indexOf(h, head); if (i >= 0 && (at < 0 || i < at)) at = i; }
+        StringBuilder sb = new StringBuilder(cap + 100);
+        sb.append(text, 0, head);
+        sb.append("\r\n[... trimmed to keep the saved session small ...]\r\n");
+        if (at >= 0) {
+            int from = Math.max(head, at - head / 2), to = Math.min(text.length(), from + (cap - head));
+            sb.append(text, from, to);
+        } else {
+            sb.append(text, head, Math.min(text.length(), cap));
+        }
+        return sb.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────

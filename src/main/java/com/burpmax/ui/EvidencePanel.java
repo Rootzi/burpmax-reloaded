@@ -125,7 +125,7 @@ final class EvidencePanel extends JPanel {
         note.setText(curResp == null && probe
                 ? "No response body was needed: this finding is confirmed out of band or by timing."
                 : (f.primaryRawRequest() == null && !probe
-                    ? "Raw traffic is not stored for findings restored from a saved session."
+                    ? "This finding was saved by an older version, which did not keep its traffic. Re-scan to capture it."
                     : " "));
         revalidate();
         repaint();
