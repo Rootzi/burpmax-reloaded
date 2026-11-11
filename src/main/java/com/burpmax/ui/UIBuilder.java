@@ -93,6 +93,8 @@ public class UIBuilder {
     private String filterTitle = null;      // null = all
     private JComboBox<String> catCombo, titleCombo;
     private boolean combosAdjusting = false;
+    private JTextField searchFieldRef;
+    private JButton sourceBtnRef;
     private java.util.Set<String> lastUiSkips = null;
     private final JButton   scanPauseBtn = ghostBtn("\u23F8 Pause scan");
     private final JButton   scanLogBtn   = ghostBtn("\uD83D\uDCDC Request log");
@@ -409,6 +411,7 @@ public class UIBuilder {
 
         // Source filter: one click cycles All -> BurpMax -> Nuclei -> All
         JButton srcToggle = ghostBtn("Source: All");
+        sourceBtnRef = srcToggle;
         srcToggle.setToolTipText("Click to cycle: all findings, BurpMax's own, or Nuclei's");
         srcToggle.addActionListener(e -> {
             sourceFilter = (sourceFilter + 1) % 3;
@@ -432,6 +435,7 @@ public class UIBuilder {
             if (combosAdjusting) return;
             Object o = catCombo.getSelectedItem();
             filterCategory = (catCombo.getSelectedIndex() <= 0 || o == null) ? null : o.toString().replaceFirst("^(.*) \\(\\d+\\)$", "$1");
+            filterTitle = null;   // the title list is narrowed to this category, so start it over
             refresh();
         });
         titleCombo.addActionListener(e -> {
@@ -442,6 +446,11 @@ public class UIBuilder {
         });
         bar.add(catCombo);
         bar.add(titleCombo);
+
+        JButton resetFilters = ghostBtn("Reset filters");
+        resetFilters.setToolTipText("Clear every filter (severity, source, category, finding, search) and show all findings");
+        resetFilters.addActionListener(e -> resetAllFilters());
+        bar.add(resetFilters);
 
         // ── Free-text search ──────────────────────────────────────
         bar.add(Box.createHorizontalStrut(16));
@@ -494,6 +503,7 @@ public class UIBuilder {
                     public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
                 });
 
+        searchFieldRef = searchField;
         JButton clearSearch = ghostBtn("x");
         clearSearch.setFont(new Font("Arial", Font.BOLD, 11));
         clearSearch.setToolTipText("Clear search filter");
@@ -890,29 +900,52 @@ public class UIBuilder {
         java.util.Map<String, Integer> cats = new java.util.TreeMap<>(), titles = new java.util.TreeMap<>();
         for (Finding f : all) {
             if (!showSuppressed && f.suppressed) continue;
-            cats.merge(com.burpmax.model.FindingCategory.of(f), 1, Integer::sum);
-            titles.merge(f.name == null ? "(untitled)" : f.name, 1, Integer::sum);
+            String cat = com.burpmax.model.FindingCategory.of(f);
+            cats.merge(cat, 1, Integer::sum);
+            // the title list only offers titles inside the chosen category, so the two never contradict
+            if (filterCategory == null || filterCategory.equals(cat))
+                titles.merge(f.name == null ? "(untitled)" : f.name, 1, Integer::sum);
         }
-        if (filterCategory != null && !cats.containsKey(filterCategory)) filterCategory = null;
+        if (filterCategory != null && !cats.containsKey(filterCategory)) { filterCategory = null; }
         if (filterTitle != null && !titles.containsKey(filterTitle)) filterTitle = null;
-        combosAdjusting = true;
-        try {
-            fillCombo(catCombo, "Category: All", cats, filterCategory);
-            fillCombo(titleCombo, "Finding: All", titles, filterTitle);
-        } finally { combosAdjusting = false; }
+        final String selCat = filterCategory, selTitle = filterTitle;
+        // Never touch a combo's model from inside its own action event (Swing re-applies the old
+        // selection afterwards and the filter appears stuck), so do it right after the event finishes.
+        SwingUtilities.invokeLater(() -> {
+            combosAdjusting = true;
+            try {
+                fillCombo(catCombo, "Category: All", cats, selCat);
+                fillCombo(titleCombo, "Finding: All", titles, selTitle);
+            } finally { combosAdjusting = false; }
+        });
     }
 
     private static void fillCombo(JComboBox<String> box, String allLabel, java.util.Map<String, Integer> items, String selected) {
-        DefaultComboBoxModel<String> m = new DefaultComboBoxModel<>();
-        m.addElement(allLabel);
+        java.util.List<String> want = new java.util.ArrayList<>();
+        want.add(allLabel);
         int sel = 0, i = 1;
         for (java.util.Map.Entry<String, Integer> e : items.entrySet()) {
-            m.addElement(e.getKey() + " (" + e.getValue() + ")");
+            want.add(e.getKey() + " (" + e.getValue() + ")");
             if (e.getKey().equals(selected)) sel = i;
             i++;
         }
-        box.setModel(m);
-        box.setSelectedIndex(sel);
+        ComboBoxModel<String> cur = box.getModel();
+        boolean same = cur.getSize() == want.size();
+        for (int k = 0; same && k < want.size(); k++) same = want.get(k).equals(cur.getElementAt(k));
+        if (!same) box.setModel(new DefaultComboBoxModel<>(want.toArray(new String[0])));
+        if (box.getSelectedIndex() != sel) box.setSelectedIndex(sel);
+    }
+
+    /** Clears every filter so all findings show again. */
+    private void resetAllFilters() {
+        filterSev = null;
+        filterCategory = null;
+        filterTitle = null;
+        sourceFilter = 0;
+        filterText = null;
+        if (sourceBtnRef != null) sourceBtnRef.setText("Source: All");
+        if (searchFieldRef != null) { searchFieldRef.setText("Search findings..."); searchFieldRef.setForeground(C_TEXT_MUTED); }
+        refresh();
     }
 
     public void refresh() {
